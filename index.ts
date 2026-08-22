@@ -106,9 +106,11 @@ function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
       const p = providers.find((x) => x.name === data.name);
       if (!p) continue;
       const authHeader = data.headers?.Authorization || data.headers?.authorization || "";
+      const envKey = data.api_key_env || "";
+      const secretKey = data.secrets?.api_key || data.secrets?.API_KEY || "";
       p.engine = data.engine || "openai";
       p.baseUrl = data.base_url || "";
-      p.authToken = authHeader.replace(/^Bearer\s+/i, "");
+      p.authToken = authHeader.replace(/^Bearer\s+/i, "") || (envKey ? process.env[envKey] || "" : "") || secretKey;
     } catch { /* skip corrupt files */ }
   }
   return providers;
@@ -117,6 +119,25 @@ function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
 function getConfigProviders(): ProviderInfo[] {
   if (!existsSync(CONFIG_PATH)) return [];
   return enrichProviders(parseYamlProviders(readFileSync(CONFIG_PATH, "utf-8")));
+}
+
+/** Set top-level env vars from config.yaml on process.env so child processes inherit them */
+function loadConfigEnvVars(): void {
+  if (!existsSync(CONFIG_PATH)) return;
+  for (const line of readFileSync(CONFIG_PATH, "utf-8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || line[0] === " " || line[0] === "\t") continue;
+    const colonIdx = trimmed.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = trimmed.slice(0, colonIdx).trim();
+    const rawVal = trimmed.slice(colonIdx + 1).trim();
+    if (!key || !rawVal || process.env[key]) continue;
+    let val = rawVal;
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+  }
 }
 
 function getAllSessions(): GooseSession[] {
@@ -207,7 +228,8 @@ function generateSessionName(prefix: string): string {
 // ─── OpenAI API model fetcher ────────────────────────────────────────────────
 
 async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
-  const url = `${provider.baseUrl!.replace(/\/+$/, "")}/v1/models`;
+  const base = provider.baseUrl!.replace(/\/+$/, "");
+  const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (provider.authToken) headers["Authorization"] = `Bearer ${provider.authToken}`;
 
@@ -228,8 +250,24 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
 
 // ─── Launch Goose ────────────────────────────────────────────────────────────
 
-function launchGoose(sessionName: string, provider: string, model: string, isNew: boolean): void {
-  writeProjectMeta({ provider, model });
+function launchGoose(sessionName: string, providerInfo: ProviderInfo, model: string, isNew: boolean): void {
+  writeProjectMeta({ provider: providerInfo.name, model });
+
+  // For custom providers (with engine), use the engine as --provider value
+  // and set appropriate env vars for base URL and auth
+  const effectiveProvider = providerInfo.engine || providerInfo.name;
+  const launchEnv: Record<string, string> = { ...process.env as Record<string, string> };
+
+  if (providerInfo.engine && providerInfo.baseUrl) {
+    // Clear conflicting env vars that may override our base URL
+    for (const k of ["OPENAI_HOST", "OPENAI_BASE_PATH", "OPENAI_BASE_URL"]) {
+      delete launchEnv[k];
+    }
+    launchEnv["OPENAI_BASE_URL"] = providerInfo.baseUrl;
+    if (providerInfo.authToken) {
+      launchEnv["OPENAI_API_KEY"] = providerInfo.authToken;
+    }
+  }
 
   const args = ["session"];
   if (!isNew) {
@@ -238,18 +276,18 @@ function launchGoose(sessionName: string, provider: string, model: string, isNew
   if (sessionName) {
     args.push("--name", sessionName);
   }
-  args.push("--provider", provider, "--model", model);
+  args.push("--provider", effectiveProvider, "--model", model);
 
   console.log(
     `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
   ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
-  ${pc.dim("Provider:")} ${pc.yellow(provider)}
+  ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}
   ${pc.dim("Model:")}    ${pc.magenta(model)}
   ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}
   `,
   );
 
-  const child = spawn("goose", args, { stdio: "inherit", env: { ...process.env } });
+  const child = spawn("goose", args, { stdio: "inherit", env: launchEnv });
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
@@ -332,6 +370,7 @@ async function main() {
 
   const projectName = getCurrentDirName();
   const sessionPrefix = projectName;
+  loadConfigEnvVars();
   const configProviders = getConfigProviders();
 
   if (configProviders.length === 0) {
@@ -617,6 +656,7 @@ async function main() {
 
       // ─── STEP 5: Summary & Launch ───────────────────────────────────────
       case "launch": {
+        const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
         const displayName = sessionName || "(auto — from first message)";
         outro(
           `${pc.green("✓")} Configuration complete:
@@ -632,7 +672,7 @@ async function main() {
           continue;
         }
 
-        launchGoose(sessionName, selectedProviderName, modelValue, isNewSession);
+        launchGoose(sessionName, providerCfg, modelValue, isNewSession);
         return; // never reached — launchGoose replaces process
       }
     }
