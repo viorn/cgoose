@@ -57,3 +57,21 @@ Built with [Clack](https://github.com/natemoo-re/clack) prompts + [picocolors](h
 3. **Per-project memory** — Persists last-used provider+model per directory, not globally. Matches project-specific workflows.
 4. **Navigation loop** — `Esc` goes back one step instead of aborting. Natural exploration flow.
 5. **Direct SQLite deletion** — Bypasses Goose CLI, writes SQL directly for speed and reliability.
+
+---
+
+## TUI Wrapper (`wrapper.ts`)
+
+Built in `feature/tui-wrapper` branch. PTY-обёртка вокруг goose session:
+
+- **PTY** через `Bun.spawn(["goose", ...], { pty: true })`
+- **Raw mode** через `Bun.Terminal.setRawMode()`
+- **Hotkeys**: Ctrl+P (model change), Ctrl+F (fork), Ctrl+Q (quit)
+- **Dialogs**: `@clack/prompts` поверх goose при активации хоткея
+- **Model switch**: отправляет `/model --provider X Y\n` в PTY (встроенная команда goose)
+- **Fork**: SIGTERM → `goose --resume --fork --provider X --model Y`
+- **Project meta**: `~/.config/cgoose/projects/<dir>-<hash>.json`
+
+### FileSink note
+В PTY-режиме `Bun.spawn` возвращает stdin как `FileSink` (не WritableStream).
+Использовать: `ptyStdin.write(data)` — синхронно, без await/getWriter.`

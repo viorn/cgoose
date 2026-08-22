@@ -171,12 +171,50 @@ goose session list --format json
 
 ---
 
-## 9. Todo (обновлённый)
+## 9. Реализация — `wrapper.ts` (v1)
 
-1. [x] **Исследовать поведение goose при pipe stdin/stdout** — **TTY required!**
-2. [x] **Проверить флаги `--resume`, `--fork`, `--edit`** — все работают
-3. [x] **Проверить встроенную команду `/model`** — смена модели на лету есть
-4. [ ] Выбрать PTY-библиотеку для TypeScript/Bun
-5. [ ] Реализовать базовую обёртку: PTY spawn → перехват клавиш → overlay
-6. [ ] Диалог смены модели на лету
-7. [ ] Диалог форка сессии
+### Файл: `wrapper.ts` (448 строк, TypeScript/Bun)
+
+### Что реализовано:
+
+- **PTY-запуск goose** — через `Bun.spawn(["goose", ...args], { pty: true })`
+- **stdin = FileSink** — в PTY-режиме stdin это `FileSink` с синхронным `.write()`
+- **pipe stdout/stderr** — асинхронное чтение через `getReader()` и запись в реальный терминал
+- **Raw mode** — `Bun.Terminal.setRawMode(true)` для перехвата клавиш
+- **Resize forwarding** — `process.stdout.on("resize")` → `terminal.resize(rows, cols)`
+
+### Горячие клавиши:
+| Клавиша | Действие |
+|---------|----------|
+| **Ctrl+P** (0x10) | Открывает диалог выбора провайдера/модели → отправляет `/model --provider X Y` в PTY |
+| **Ctrl+F** (0x06) | Подтверждение → SIGTERM → `goose --resume --fork --provider X --model Y` |
+| **Ctrl+Q** (0x11) | Подтверждение → SIGTERM → exit |
+| **Ctrl+C** (0x03) | Пробрасывается в goose (он сам обрабатывает двойной Ctrl+C) |
+
+### Ключевые технические решения:
+- **Bun.Terminal** для raw mode (native Bun API, не нужен node-pty)
+- **Bun.spawn с `pty: true`** — создаёт PTY для goose
+- **FileSink.write()** — синхронная запись в PTY stdin (не WritableStream)
+- **@clack/prompts** — модальные диалоги (select, text, confirm) при активации хоткея
+- **Project meta** — сохраняется в `~/.config/cgoose/projects/<dir>-<hash>.json`
+
+### Известные ограничения v1:
+- Нет пре-шага с выбором сессии (сейчас всегда создаёт новую)
+- Диалоги Clack прерывают вывод goose (сырой терминал переключается в cooked mode)
+- Нет визуального хоткей-хинта (пользователь должен знать Ctrl+P/F/Q)
+- `/model` команда не показывает результат (отправлена, но фидбек только в stdout goose)
+
+## 10. Todo
+
+1. [x] Исследовать поведение goose при pipe stdin/stdout — **TTY required!**
+2. [x] Проверить флаги `--resume`, `--fork`, `--edit`
+3. [x] Проверить встроенную команду `/model`
+4. [x] Выбрать PTY-библиотеку — **Bun.spawn с `pty: true`** (native)
+5. [x] Реализовать базовую обёртку: PTY spawn → перехват клавиш → overlay
+6. [x] Диалог смены модели на лету
+7. [x] Диалог форка сессии
+8. [ ] Session picker как в index.ts (выбор существующей / создание новой)
+9. [ ] Status bar с горячими клавишами
+10. [ ] Сплит-экран: goose output + вспомогательная панель
+11. [ ] Graceful handling: показать результат `/model` команды
+12. [ ] Интеграция с `index.ts` (cgoose → wrapper, единый entry point)
