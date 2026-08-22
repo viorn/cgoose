@@ -6,17 +6,13 @@ Built with [Clack](https://github.com/natemoo-re/clack) prompts + [picocolors](h
 
 ## Screenshots
 
-### Session Selection
-![Session Selection](Screenshot_20260822_143906_Termux.jpg)
+![Screenshot_20260822_143906_Termux.jpg](Screenshot_20260822_143906_Termux.jpg)
 
-### Provider & Model Selection
-![Provider & Model Selection](Screenshot_20260822_143916_Termux.jpg)
+![Screenshot_20260822_143916_Termux.jpg](Screenshot_20260822_143916_Termux.jpg)
 
-### Launch Summary
-![Launch Summary](Screenshot_20260822_143929_Termux.jpg)
+![Screenshot_20260822_143929_Termux.jpg](Screenshot_20260822_143929_Termux.jpg)
 
-### Session Management (Delete)
-![Session Management](Screenshot_20260822_143936_Termux.jpg)
+![Screenshot_20260822_143936_Termux.jpg](Screenshot_20260822_143936_Termux.jpg)
 
 ---
 
