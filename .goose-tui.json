@@ -1,6 +1,0 @@
-{
-  "20260822_1": {
-    "provider": "custom_api_ai_openintegration_inc",
-    "model": "deepseek/deepseek-v4-flash"
-  }
-}
