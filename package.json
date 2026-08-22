@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "TUI for Goose AI sessions - session manager with provider/model selection",
   "type": "module",
-  "main": "index.ts",
+  "main": "src/index.ts",
   "scripts": {
-    "start": "bun run index.ts"
+    "start": "bun run src/index.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",

@@ -7,7 +7,7 @@ echo "📦 Installing dependencies..."
 bun install
 
 echo "🔨 Compiling cgoose..."
-bun build ./index.ts --compile --outfile cgoose
+bun build ./src/index.ts --compile --outfile cgoose
 
 INSTALL_DIR="${HOME}/.local/bin"
 mkdir -p "$INSTALL_DIR"

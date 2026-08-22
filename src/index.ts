@@ -2,344 +2,28 @@
 /**
  * cgoose — TUI for Goose AI Sessions
  *
- * Features:
- * - интерактивный поиск сессий / провайдеров / моделей (autocomplete)
- * - создание новой сессии с именем вида project-YYYY-MM-DD-HH-mm
- * - выбор провайдера из enabled в config.yaml
- * - запоминает последний использованный провайдер/модель для проекта
- *   (в ~/.config/cgoose/projects/<dirname>-<hash>.json)
- * - Fetch моделей через OpenAI API (v1/models) для custom-провайдеров
- * - 🦙 auto-детект локального Ollama (минуя конфиги Goose)
- * - запуск goose session [--name] --provider --model [--resume --history]
+ * Entry point. Imports all modules and runs the interactive TUI loop.
  */
 
-import { execSync, spawn } from "node:child_process";
-import { readFileSync, existsSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
-import { join, resolve, basename } from "node:path";
-import { homedir } from "node:os";
-import { createHash } from "node:crypto";
 import process from "node:process";
-import { autocomplete, confirm, intro, isCancel, log, outro, select, spinner, text, multiselect } from "@clack/prompts";
+import { resolve } from "node:path";
+import {
+  autocomplete, confirm, intro, isCancel, log, outro, select, spinner, text, multiselect,
+} from "@clack/prompts";
 import pc from "picocolors";
 
-// ─── Paths ───────────────────────────────────────────────────────────────────
-
-const CONFIG_PATH = join(homedir(), ".config", "goose", "config.yaml");
-const CUSTOM_PROVIDERS_DIR = join(homedir(), ".config", "goose", "custom_providers");
-const CGOOSE_PROJECTS_DIR = join(homedir(), ".config", "cgoose", "projects");
+import { getCurrentDirName, generateSessionName } from "./utils";
+import { getConfigProviders, loadConfigEnvVars, type ProviderInfo } from "./config";
+import { readProjectMeta } from "./project";
+import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
+import { detectOllama, fetchModelsFromApi, type OllamaModelInfo } from "./models";
+import { launchGoose } from "./launcher";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface GooseSession {
-  id: string;
-  name: string;
-  working_dir: string;
-  provider_name: string | null;
-  model_config: { model_name: string } | null;
-  created_at: string;
-  updated_at: string;
-  message_count: number;
-}
+type Step = "session" | "session_name" | "provider" | "model" | "launch";
 
-interface ProviderInfo {
-  name: string;
-  model: string;
-  engine?: string;
-  baseUrl?: string;
-  authToken?: string;
-}
-
-interface ProjectMeta {
-  provider: string;
-  /** History of models used per provider (first = last used) */
-  modelHistory: Record<string, string[]>;
-}
-
-
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getCurrentDirName(): string {
-  return basename(resolve("."));
-}
-
-function parseYamlProviders(raw: string): ProviderInfo[] {
-  const lines = raw.split("\n");
-  const providers: ProviderInfo[] = [];
-  let inProviders = false, currentName = "", currentEnabled = false;
-
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-    if (line.startsWith("providers:")) { inProviders = true; continue; }
-    if (!inProviders) continue;
-    if (!line.startsWith(" ") && !line.startsWith("\t") && line.length > 0 && !line.startsWith("#")) {
-      const colonIdx = line.indexOf(":");
-      if (colonIdx > 0) {
-        const key = line.slice(0, colonIdx);
-        if (key.trim().length > 0 && !key.trim().startsWith("-")) break;
-      }
-    }
-    const trimmed = line.trim();
-    if (trimmed.endsWith(":") && !trimmed.startsWith("-") && trimmed.length > 1) {
-      currentName = trimmed.slice(0, -1);
-      currentEnabled = false;
-      continue;
-    }
-    if (trimmed.startsWith("enabled:")) {
-      currentEnabled = trimmed.split("enabled:")[1]?.trim() === "true";
-      continue;
-    }
-    if (trimmed.startsWith("model:") && currentName && currentEnabled) {
-      const model = trimmed.split("model:")[1]?.trim();
-      if (model) providers.push({ name: currentName, model });
-      currentName = "";
-      currentEnabled = false;
-    }
-  }
-  return providers;
-}
-
-/** Enrich providers with engine/base_url/auth from custom_providers JSON files */
-function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
-  if (!existsSync(CUSTOM_PROVIDERS_DIR)) return providers;
-  for (const file of readdirSync(CUSTOM_PROVIDERS_DIR).filter((f) => f.endsWith(".json"))) {
-    try {
-      const data = JSON.parse(readFileSync(join(CUSTOM_PROVIDERS_DIR, file), "utf-8"));
-      const p = providers.find((x) => x.name === data.name);
-      if (!p) continue;
-      const authHeader = data.headers?.Authorization || data.headers?.authorization || "";
-      const envKey = data.api_key_env || "";
-      const secretKey = data.secrets?.api_key || data.secrets?.API_KEY || "";
-      p.engine = data.engine || "openai";
-      p.baseUrl = data.base_url || "";
-      p.authToken = authHeader.replace(/^Bearer\s+/i, "") || (envKey ? process.env[envKey] || "" : "") || secretKey;
-    } catch { /* skip corrupt files */ }
-  }
-  return providers;
-}
-
-function getConfigProviders(): ProviderInfo[] {
-  if (!existsSync(CONFIG_PATH)) return [];
-  return enrichProviders(parseYamlProviders(readFileSync(CONFIG_PATH, "utf-8")));
-}
-
-/** Set top-level env vars from config.yaml on process.env so child processes inherit them */
-function loadConfigEnvVars(): void {
-  if (!existsSync(CONFIG_PATH)) return;
-  for (const line of readFileSync(CONFIG_PATH, "utf-8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || line[0] === " " || line[0] === "\t") continue;
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = trimmed.slice(0, colonIdx).trim();
-    const rawVal = trimmed.slice(colonIdx + 1).trim();
-    if (!key || !rawVal || process.env[key]) continue;
-    let val = rawVal;
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    process.env[key] = val;
-  }
-}
-
-function getAllSessions(): GooseSession[] {
-  try {
-    const output = execSync("goose session list --format json", {
-      encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"],
-    });
-    const jsonStart = output.indexOf("[");
-    const jsonEnd = output.lastIndexOf("]");
-    if (jsonStart === -1 || jsonEnd === -1) return [];
-    return JSON.parse(output.slice(jsonStart, jsonEnd + 1)) as GooseSession[];
-  } catch { return []; }
-}
-
-
-
-/** Delete a session by ID from SQLite db, returns true on success */
-const SESSIONS_DB = join(homedir(), ".local/share/goose/sessions/sessions.db");
-
-function deleteSessionById(sessionId: string): boolean {
-  try {
-    const sql = [
-      "BEGIN;",
-      `DELETE FROM messages WHERE session_id = '${sessionId}';`,
-      `DELETE FROM usage_ledger WHERE session_id = '${sessionId}';`,
-      `DELETE FROM sessions WHERE id = '${sessionId}';`,
-      "COMMIT;",
-    ].join("\n");
-    execSync(`sqlite3 "${SESSIONS_DB}"`, {
-      input: sql,
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Format a session for display */
-function formatSessionHint(s: GooseSession): { name: string; hint: string } {
-  const prov = s.provider_name ?? "—";
-  const model = s.model_config?.model_name ?? "—";
-  const modelShort = model.length > 30 ? model.slice(0, 27) + "…" : model;
-  const dateStr = s.created_at
-    ? new Date(s.created_at).toLocaleDateString("ru-RU", {
-        day: "2-digit", month: "2-digit", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
-      })
-    : "—";
-  const msgHint = s.message_count > 0 ? "(" + s.message_count + " msgs)" : "";
-  const hint = dateStr + " " + prov + " " + modelShort + " " + msgHint;
-  return { name: s.name || s.id, hint: hint.trim() };
-}
-
-/** Get a stable project key: dirname + short hash of the full path */
-function getProjectKey(): string {
-  const dir = resolve(".");
-  const hash = createHash("sha256").update(dir).digest("hex").slice(0, 8);
-  return `${basename(dir)}-${hash}`;
-}
-
-function getProjectMetaPath(): string {
-  return join(CGOOSE_PROJECTS_DIR, `${getProjectKey()}.json`);
-}
-
-function readProjectMeta(): ProjectMeta | null {
-  const path = getProjectMetaPath();
-  if (!existsSync(path)) return null;
-  try {
-    const raw = JSON.parse(readFileSync(path, "utf-8"));
-    // Migrate old format: { provider, model } → { provider, modelHistory }
-    if (raw.model && !raw.modelHistory) {
-      raw.modelHistory = { [raw.provider]: [raw.model] };
-    }
-    return raw as ProjectMeta;
-  } catch { return null; }
-}
-
-function writeProjectMeta(provider: string, model: string): void {
-  const dir = CGOOSE_PROJECTS_DIR;
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const path = getProjectMetaPath();
-
-  // Merge with existing meta to preserve model history
-  const existing = existsSync(path)
-    ? (() => { try { return JSON.parse(readFileSync(path, "utf-8")) as ProjectMeta; } catch { return null; } })()
-    : null;
-
-  const modelHistory: Record<string, string[]> = existing?.modelHistory ?? {};
-  const prevList = (modelHistory[provider] ?? []).filter((m) => m !== model);
-  modelHistory[provider] = [model, ...prevList].slice(0, 10); // keep max 10 per provider
-
-  writeFileSync(path, JSON.stringify({ provider, modelHistory }, null, 2) + "\n");
-}
-
-function generateSessionName(prefix: string): string {
-  const now = new Date();
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${prefix}-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}`;
-}
-
-// ─── Ollama detection ────────────────────────────────────────────────────────
-
-const OLLAMA_HOST = "http://localhost:11434";
-
-interface OllamaModelInfo {
-  name: string;
-  supportsTools: boolean;
-}
-
-/** Check if Ollama is running and return available models with capabilities */
-async function detectOllama(): Promise<OllamaModelInfo[] | null> {
-  try {
-    const response = await fetch(`${OLLAMA_HOST}/api/tags`, {
-      signal: AbortSignal.timeout(2_000),
-    });
-    if (!response.ok) return null;
-    const data: any = await response.json();
-    const models: OllamaModelInfo[] = (data.models || [])
-      .map((m: any) => ({
-        name: m.name,
-        supportsTools: (m.capabilities || []).includes("tools"),
-      }))
-      .sort((a: OllamaModelInfo, b: OllamaModelInfo) => a.name.localeCompare(b.name));
-    return models.length > 0 ? models : null;
-  } catch {
-    return null;
-  }
-}
-
-// ─── OpenAI API model fetcher ────────────────────────────────────────────────
-
-async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
-  const base = provider.baseUrl!.replace(/\/+$/, "");
-  const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (provider.authToken) headers["Authorization"] = `Bearer ${provider.authToken}`;
-
-  const s = spinner();
-  s.start(`Fetching models from ${provider.baseUrl}...`);
-
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-
-  const data: any = await response.json();
-  const models: string[] = (data.data || []).map((m: any) => m.id).sort();
-  s.stop(`Found ${models.length} models`);
-  return models;
-}
-
-
-
-
-// ─── Launch Goose ────────────────────────────────────────────────────────────
-
-function launchGoose(sessionName: string, providerInfo: ProviderInfo, model: string, isNew: boolean): void {
-  writeProjectMeta(providerInfo.name, model);
-
-  // For custom providers (with engine), use the engine as --provider value
-  // and set appropriate env vars for base URL and auth
-  const effectiveProvider = providerInfo.engine || providerInfo.name;
-  const launchEnv: Record<string, string> = { ...process.env as Record<string, string> };
-
-  if (providerInfo.engine && providerInfo.baseUrl) {
-    // Clear conflicting env vars that may override our base URL
-    for (const k of ["OPENAI_HOST", "OPENAI_BASE_PATH", "OPENAI_BASE_URL"]) {
-      delete launchEnv[k];
-    }
-    launchEnv["OPENAI_BASE_URL"] = providerInfo.baseUrl;
-    if (providerInfo.authToken) {
-      launchEnv["OPENAI_API_KEY"] = providerInfo.authToken;
-    }
-  }
-
-  const args = ["session"];
-  if (!isNew) {
-    args.push("--resume", "--history");
-  }
-  if (sessionName) {
-    args.push("--name", sessionName);
-  }
-  args.push("--provider", effectiveProvider, "--model", model);
-
-  console.log(
-    `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
-  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
-  ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}
-  ${pc.dim("Model:")}    ${pc.magenta(model)}
-  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}
-  `,
-  );
-
-  const child = spawn("goose", args, { stdio: "inherit", env: launchEnv });
-  child.on("exit", (code) => process.exit(code ?? 0));
-}
-
-
-// ---- Session deletion dialog ------------------------------------------------
+// ─── Session deletion dialog ─────────────────────────────────────────────────
 
 async function handleDeleteSessions(
   _allSessions: GooseSession[],
@@ -409,8 +93,6 @@ async function handleDeleteSessions(
 
 // ─── Main TUI ────────────────────────────────────────────────────────────────
 
-type Step = "session" | "session_name" | "provider" | "model" | "launch";
-
 async function main() {
   console.clear();
   intro(`${pc.bgCyan(pc.black(" cgoose "))} ${pc.dim("— TUI for Goose AI Sessions")}`);
@@ -424,7 +106,7 @@ async function main() {
   const hasAnyProvider = configProviders.length > 0 || (ollamaModels !== null && ollamaModels.length > 0);
 
   if (!hasAnyProvider) {
-    log.error(pc.red('\u2716 No enabled providers found in ' + CONFIG_PATH));
+    log.error(pc.red('\u2716 No enabled providers found in ' + resolve('.config/goose/config.yaml')));
     log.info(pc.dim("  Run 'goose configure' to set up a provider first, or install Ollama (ollama.com)."));
     process.exit(1);
   }
@@ -539,47 +221,53 @@ async function main() {
 
       // ─── STEP 3: Provider selection ─────────────────────────────────────
       case "provider": {
-        const lastMeta = isNewSession ? null : readProjectMeta();
+        const lastMeta = readProjectMeta();
         const lastProviderRaw = lastMeta?.provider ?? null;
         const sessionObj = lastAllSessions.find((s) => s.id === sessionName);
         const sessionProvider = sessionObj?.provider_name ?? null;
 
+        const providerHistory = lastMeta?.providerHistory ?? [];
         const providerOptions: { label: string; value: string; hint?: string }[] = [];
 
-        for (const p of configProviders) {
+        // Sort config providers: history first (most recent → oldest), then alphabetical
+        const sortedProviders = [...configProviders].sort((a, b) => {
+          const aIdx = providerHistory.indexOf(a.name);
+          const bIdx = providerHistory.indexOf(b.name);
+          if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+          if (aIdx !== -1) return -1;
+          if (bIdx !== -1) return 1;
+          return a.name.localeCompare(b.name);
+        });
+
+        for (const p of sortedProviders) {
           // Actual default model: if this provider was used before, last model from history; else config model
           const defaultModel = lastMeta?.modelHistory?.[p.name]?.[0] ?? p.model;
           let hint = defaultModel;
-          let isDefault = false;
+          let label = p.name;
+          let extra = "";
 
           if (p.name === lastProviderRaw) {
-            hint += ` ${pc.dim("(last used)")}`;
-            isDefault = true;
+            extra = ` ${pc.dim("(last used)")}`;
+            label = `${p.name} ${pc.dim("←")}`;
           } else if (p.name === sessionProvider && !lastProviderRaw) {
-            hint += ` ${pc.dim("(session provider)")}`;
-            isDefault = true;
+            extra = ` ${pc.dim("(session provider)")}`;
+          } else if (providerHistory.includes(p.name)) {
+            extra = ` ${pc.dim("(history)")}`;
           }
 
-          const opt = {
-            label: isDefault ? `${p.name} ${pc.dim("←")}` : p.name,
-            value: p.name,
-            hint,
-          };
-
-          if (p.name === lastProviderRaw) {
-            providerOptions.unshift(opt);
-          } else {
-            providerOptions.push(opt);
-          }
+          providerOptions.push({ label, value: p.name, hint: hint + extra });
         }
 
         // Add local Ollama if running
         if (ollamaModels && ollamaModels.length > 0) {
           const isOllamaDefault = lastProviderRaw === "ollama";
+          const inHistory = providerHistory.includes("ollama");
           const toolsCount = ollamaModels.filter((m) => m.supportsTools).length;
-          const hint = toolsCount > 0
+          let hint = toolsCount > 0
             ? `${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} (${toolsCount} with tools)`
             : `${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} ⚠️ no tool support`;
+          if (isOllamaDefault) hint += ` ${pc.dim("(last used)")}`;
+          else if (inHistory) hint += ` ${pc.dim("(history)")}`;
           const opt = {
             label: isOllamaDefault
               ? `🦙 Ollama (local) ${pc.dim("←")}`
@@ -587,8 +275,15 @@ async function main() {
             value: "ollama",
             hint,
           };
+
+          // Insert at correct position: after history providers, before non-history
           if (isOllamaDefault) {
             providerOptions.unshift(opt);
+          } else if (inHistory) {
+            // Find last history provider index and insert after
+            const lastHistIdx = providerOptions.reduce((max, o, i) =>
+              providerHistory.includes(o.value) ? i : max, -1);
+            providerOptions.splice(lastHistIdx + 1, 0, opt);
           } else {
             providerOptions.push(opt);
           }
@@ -621,7 +316,7 @@ async function main() {
 
         // ── Ollama: show models directly from detection ──────────────────
         if (selectedProviderName === "ollama") {
-          const lastMeta = isNewSession ? null : readProjectMeta();
+          const lastMeta = readProjectMeta();
           const lastModel = lastMeta?.provider === "ollama" ? (lastMeta.modelHistory.ollama?.[0] ?? null) : null;
 
           const modelOptions = ollamaModels!.map((m) => ({
@@ -670,7 +365,7 @@ async function main() {
           continue;
         }
 
-        const lastMeta = isNewSession ? null : readProjectMeta();
+        const lastMeta = readProjectMeta();
         const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
         const defaultModel = lastMeta?.provider === selectedProviderName
           ? (lastMeta.modelHistory[selectedProviderName]?.[0] ?? "")
