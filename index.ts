@@ -547,7 +547,9 @@ async function main() {
         const providerOptions: { label: string; value: string; hint?: string }[] = [];
 
         for (const p of configProviders) {
-          let hint = p.model;
+          // Actual default model: if this provider was used before, last model from history; else config model
+          const defaultModel = lastMeta?.modelHistory?.[p.name]?.[0] ?? p.model;
+          let hint = defaultModel;
           let isDefault = false;
 
           if (p.name === lastProviderRaw) {
