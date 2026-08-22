@@ -181,32 +181,7 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
   return models;
 }
 
-/**
- * Disable dynamic_models in all provider JSONs so goose uses static config only
- */
-function disableDynamicModels(): void {
-  if (!existsSync(CUSTOM_PROVIDERS_DIR)) return;
-  for (const file of readdirSync(CUSTOM_PROVIDERS_DIR).filter((f) => f.endsWith(".json"))) {
-    try {
-      const path = join(CUSTOM_PROVIDERS_DIR, file);
-      const data: Record<string, any> = JSON.parse(readFileSync(path, "utf-8"));
-      let changed = false;
-      if (data.dynamic_models === true) {
-        data.dynamic_models = false;
-        changed = true;
-      }
-      // Also prevent goose from querying API for model capabilities
-      if (data.skip_canonical_filtering !== true) {
-        data.skip_canonical_filtering = true;
-        changed = true;
-      }
-      if (changed) {
-        writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-        log.step(pc.dim(`Patched ${file}: dynamic_models=false, skip_canonical_filtering=true`));
-      }
-    } catch { /* skip */ }
-  }
-}
+
 
 
 // ─── Launch Goose ────────────────────────────────────────────────────────────
@@ -236,9 +211,6 @@ function launchGoose(sessionName: string, provider: string, model: string, isNew
 async function main() {
   console.clear();
   intro(`${pc.bgCyan(pc.black(" cgoose "))} ${pc.dim("— TUI for Goose AI Sessions")}`);
-
-  // Disable auto-discovery; goose should use models from static config only
-  disableDynamicModels();
 
   const projectName = getCurrentDirName();
   const sessionPrefix = projectName;
