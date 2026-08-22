@@ -51,9 +51,8 @@ interface ProviderInfo {
 
 interface ProjectMeta {
   provider: string;
-  model: string;
-  /** History of models used per provider */
-  modelHistory?: Record<string, string[]>;
+  /** History of models used per provider (first = last used) */
+  modelHistory: Record<string, string[]>;
 }
 
 
@@ -212,11 +211,16 @@ function readProjectMeta(): ProjectMeta | null {
   const path = getProjectMetaPath();
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as ProjectMeta;
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
+    // Migrate old format: { provider, model } → { provider, modelHistory }
+    if (raw.model && !raw.modelHistory) {
+      raw.modelHistory = { [raw.provider]: [raw.model] };
+    }
+    return raw as ProjectMeta;
   } catch { return null; }
 }
 
-function writeProjectMeta(meta: ProjectMeta): void {
+function writeProjectMeta(provider: string, model: string): void {
   const dir = CGOOSE_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = getProjectMetaPath();
@@ -226,14 +230,11 @@ function writeProjectMeta(meta: ProjectMeta): void {
     ? (() => { try { return JSON.parse(readFileSync(path, "utf-8")) as ProjectMeta; } catch { return null; } })()
     : null;
 
-  const modelHistory = existing?.modelHistory ?? {};
-  const provider = meta.provider;
-  if (!modelHistory[provider]) modelHistory[provider] = [];
-  // Add current model to history (dedup, move to front)
-  const prevList = modelHistory[provider].filter((m) => m !== meta.model);
-  modelHistory[provider] = [meta.model, ...prevList].slice(0, 10); // keep max 10 per provider
+  const modelHistory: Record<string, string[]> = existing?.modelHistory ?? {};
+  const prevList = (modelHistory[provider] ?? []).filter((m) => m !== model);
+  modelHistory[provider] = [model, ...prevList].slice(0, 10); // keep max 10 per provider
 
-  writeFileSync(path, JSON.stringify({ ...existing, ...meta, modelHistory }, null, 2) + "\n");
+  writeFileSync(path, JSON.stringify({ provider, modelHistory }, null, 2) + "\n");
 }
 
 function generateSessionName(prefix: string): string {
@@ -297,7 +298,7 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
 // ─── Launch Goose ────────────────────────────────────────────────────────────
 
 function launchGoose(sessionName: string, providerInfo: ProviderInfo, model: string, isNew: boolean): void {
-  writeProjectMeta({ provider: providerInfo.name, model });
+  writeProjectMeta(providerInfo.name, model);
 
   // For custom providers (with engine), use the engine as --provider value
   // and set appropriate env vars for base URL and auth
@@ -619,7 +620,7 @@ async function main() {
         // ── Ollama: show models directly from detection ──────────────────
         if (selectedProviderName === "ollama") {
           const lastMeta = isNewSession ? null : readProjectMeta();
-          const lastModel = lastMeta?.provider === "ollama" ? lastMeta.model : null;
+          const lastModel = lastMeta?.provider === "ollama" ? (lastMeta.modelHistory.ollama?.[0] ?? null) : null;
 
           const modelOptions = ollamaModels!.map((m) => ({
             label: m.name === lastModel
@@ -670,7 +671,7 @@ async function main() {
         const lastMeta = isNewSession ? null : readProjectMeta();
         const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
         const defaultModel = lastMeta?.provider === selectedProviderName
-          ? lastMeta.model
+          ? (lastMeta.modelHistory[selectedProviderName]?.[0] ?? "")
           : providerCfg?.model ?? "";
 
         const supportsApiFetch = providerCfg?.engine === "openai" && !!providerCfg?.baseUrl;
