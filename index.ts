@@ -308,7 +308,10 @@ async function main() {
   const sessionObj = allSessions.find((s) => s.id === sessionName);
   const sessionProvider = sessionObj?.provider_name ?? null;
 
-  const providerOptions = configProviders.map((p) => {
+  // Build provider options — last used first for quick Enter
+  const providerOptions: { label: string; value: string; hint?: string }[] = [];
+
+  for (const p of configProviders) {
     let hint = p.model;
     let isDefault = false;
 
@@ -320,12 +323,19 @@ async function main() {
       isDefault = true;
     }
 
-    return {
+    const opt = {
       label: isDefault ? `${p.name} ${pc.dim("←")}` : p.name,
       value: p.name,
       hint,
     };
-  });
+
+    // Insert last used at the very top, rest at the end
+    if (p.name === lastProviderRaw) {
+      providerOptions.unshift(opt);
+    } else {
+      providerOptions.push(opt);
+    }
+  }
 
   const selectedProvider = await autocomplete({
     message: "Provider:",
