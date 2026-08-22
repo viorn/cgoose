@@ -53,20 +53,7 @@ interface ProjectMeta {
   model: string;
 }
 
-interface ApiModel {
-  id: string;
-  maxInputTokens?: number;
-}
 
-interface ProviderJson {
-  name?: string;
-  engine?: string;
-  base_url?: string;
-  headers?: Record<string, string>;
-  models?: { name: string; context_limit?: number }[];
-  dynamic_models?: boolean;
-  [key: string]: unknown;
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -177,7 +164,7 @@ function generateSessionName(prefix: string): string {
 
 // ─── OpenAI API model fetcher ────────────────────────────────────────────────
 
-async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiModel[]> {
+async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
   const url = `${provider.baseUrl!.replace(/\/+$/, "")}/v1/models`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (provider.authToken) headers["Authorization"] = `Bearer ${provider.authToken}`;
@@ -189,12 +176,7 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiModel[]> {
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
   const data: any = await response.json();
-  const models: ApiModel[] = (data.data || [])
-    .map((m: any) => ({
-      id: m.id,
-      maxInputTokens: m.max_input_tokens ?? m.maxInputTokens ?? undefined,
-    }))
-    .sort((a: ApiModel, b: ApiModel) => a.id.localeCompare(b.id));
+  const models: string[] = (data.data || []).map((m: any) => m.id).sort();
   s.stop(`Found ${models.length} models`);
   return models;
 }
@@ -207,48 +189,25 @@ function disableDynamicModels(): void {
   for (const file of readdirSync(CUSTOM_PROVIDERS_DIR).filter((f) => f.endsWith(".json"))) {
     try {
       const path = join(CUSTOM_PROVIDERS_DIR, file);
-      const data: ProviderJson = JSON.parse(readFileSync(path, "utf-8"));
+      const data: Record<string, any> = JSON.parse(readFileSync(path, "utf-8"));
+      let changed = false;
       if (data.dynamic_models === true) {
         data.dynamic_models = false;
+        changed = true;
+      }
+      // Also prevent goose from querying API for model capabilities
+      if (data.skip_canonical_filtering !== true) {
+        data.skip_canonical_filtering = true;
+        changed = true;
+      }
+      if (changed) {
         writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-        log.step(pc.dim(`Disabled dynamic_models in ${file}`));
+        log.step(pc.dim(`Patched ${file}: dynamic_models=false, skip_canonical_filtering=true`));
       }
     } catch { /* skip */ }
   }
 }
-function saveModelToProviderConfig(providerName: string, modelName: string, contextLimit: number): boolean {
-  if (!existsSync(CUSTOM_PROVIDERS_DIR)) return false;
-  let found = false;
-  for (const file of readdirSync(CUSTOM_PROVIDERS_DIR).filter((f) => f.endsWith(".json"))) {
-    try {
-      const path = join(CUSTOM_PROVIDERS_DIR, file);
-      const data: ProviderJson = JSON.parse(readFileSync(path, "utf-8"));
-      if (data.name !== providerName) continue;
-      found = true;
 
-      // Also ensure dynamic_models is off
-      if (data.dynamic_models !== false) {
-        data.dynamic_models = false;
-      }
-
-      // Find existing entry or add new one
-      const models = data.models ?? [];
-      const existing = models.find((m) => m.name === modelName);
-      if (existing) {
-        existing.context_limit = contextLimit;
-      } else {
-        models.push({ name: modelName, context_limit: contextLimit });
-      }
-      data.models = models;
-
-      writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
-      log.step(`Saved model ${pc.cyan(modelName)} → ${pc.dim(file)} (context_limit: ${contextLimit.toLocaleString()})`);
-      return true;
-    } catch { /* skip */ }
-  }
-  if (!found) log.error(pc.red(`Provider config "${providerName}" not found in ${CUSTOM_PROVIDERS_DIR}`));
-  return false;
-}
 
 // ─── Launch Goose ────────────────────────────────────────────────────────────
 
@@ -498,9 +457,9 @@ async function main() {
           message: `Select model from ${pc.cyan(providerCfg.baseUrl!)}:`,
           placeholder: `Type to filter ${apiModels.length} models...`,
           options: apiModels.map((m) => ({
-            label: m.id,
-            value: m.id,
-            hint: m.maxInputTokens ? pc.dim(`${(m.maxInputTokens / 1000).toFixed(0)}K ctx`) : "",
+            label: m,
+            value: m,
+            hint: "",
           })),
           maxItems: 15,
           filter: (search, opt) => {
@@ -511,34 +470,6 @@ async function main() {
 
         if (isCancel(apiModelChoice)) process.exit(0);
         modelValue = apiModelChoice as string;
-
-        // ── Optional: set context limit and save to config ────────────────
-        const chosenApiModel = apiModels.find((m) => m.id === modelValue);
-        const defaultCtx = chosenApiModel?.maxInputTokens ?? 128000;
-
-        const setLimit = await confirm({
-          message: `Set context limit for ${pc.cyan(modelValue)}? (API reports ${(defaultCtx / 1000).toFixed(0)}K)`,
-          initialValue: false,
-        });
-
-        if (isCancel(setLimit)) process.exit(0);
-
-        let finalCtx = defaultCtx;
-        if (setLimit) {
-          const ctxInput = await text({
-            message: `Context limit (tokens) for ${pc.cyan(modelValue)}:`,
-            placeholder: String(defaultCtx),
-            defaultValue: String(defaultCtx),
-            validate: (val) => {
-              const n = Number(val);
-              if (isNaN(n) || n < 1000) return "Enter a valid number (min 1000)";
-            },
-          });
-          if (isCancel(ctxInput)) process.exit(0);
-          finalCtx = Number((ctxInput as string).trim()) || defaultCtx;
-        }
-
-        saveModelToProviderConfig(selectedProviderName, modelValue, finalCtx);
       }
     } catch (err) {
       log.error(pc.red(`Failed to fetch models: ${err}`));
@@ -560,28 +491,6 @@ async function main() {
 
     if (isCancel(typed)) process.exit(0);
     modelValue = (typed as string).trim() || defaultModel;
-
-    // ── Optional: save to config with context limit ──────────────────────
-    const addToCfg = await confirm({
-      message: `Save ${pc.cyan(modelValue)} to provider config?`,
-      initialValue: false,
-    });
-
-    if (isCancel(addToCfg)) process.exit(0);
-
-    if (addToCfg) {
-      const ctxInput = await text({
-        message: `Context limit (tokens) for ${pc.cyan(modelValue)}:`,
-        placeholder: "128000",
-        defaultValue: "128000",
-        validate: (val) => {
-          const n = Number(val);
-          if (isNaN(n) || n < 1000) return "Enter a valid number (min 1000)";
-        },
-      });
-      if (isCancel(ctxInput)) process.exit(0);
-      saveModelToProviderConfig(selectedProviderName, modelValue, Number((ctxInput as string).trim()) || 128000);
-    }
   } else {
     // User selected a specific model from the list
     modelValue = modelChoice as string;
