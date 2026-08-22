@@ -52,6 +52,8 @@ interface ProviderInfo {
 interface ProjectMeta {
   provider: string;
   model: string;
+  /** History of models used per provider */
+  modelHistory?: Record<string, string[]>;
 }
 
 
@@ -217,7 +219,21 @@ function readProjectMeta(): ProjectMeta | null {
 function writeProjectMeta(meta: ProjectMeta): void {
   const dir = CGOOSE_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(getProjectMetaPath(), JSON.stringify(meta, null, 2) + "\n");
+  const path = getProjectMetaPath();
+
+  // Merge with existing meta to preserve model history
+  const existing = existsSync(path)
+    ? (() => { try { return JSON.parse(readFileSync(path, "utf-8")) as ProjectMeta; } catch { return null; } })()
+    : null;
+
+  const modelHistory = existing?.modelHistory ?? {};
+  const provider = meta.provider;
+  if (!modelHistory[provider]) modelHistory[provider] = [];
+  // Add current model to history (dedup, move to front)
+  const prevList = modelHistory[provider].filter((m) => m !== meta.model);
+  modelHistory[provider] = [meta.model, ...prevList].slice(0, 10); // keep max 10 per provider
+
+  writeFileSync(path, JSON.stringify({ ...existing, ...meta, modelHistory }, null, 2) + "\n");
 }
 
 function generateSessionName(prefix: string): string {
@@ -666,6 +682,17 @@ async function main() {
             label: pc.green(`✦ ${defaultModel}`),
             value: defaultModel,
             hint: pc.dim("last used"),
+          });
+        }
+
+        // Add history models for this provider (skip if already shown as default)
+        const allHistory = lastMeta?.modelHistory?.[selectedProviderName] ?? [];
+        const historyModels = allHistory.filter((m) => m !== defaultModel);
+        for (const m of historyModels) {
+          modelOptions.push({
+            label: pc.dim(m),
+            value: m,
+            hint: pc.dim("history"),
           });
         }
 
