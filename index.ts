@@ -6,15 +6,17 @@
  * - интерактивный поиск сессий / провайдеров / моделей (autocomplete)
  * - создание новой сессии с именем вида project-YYYY-MM-DD-HH-mm
  * - выбор провайдера из enabled в config.yaml
- * - показывает последний использованный провайдер/модель (из .goose-tui.json)
+ * - запоминает последний использованный провайдер/модель для проекта
+ *   (в ~/.config/cgoose/projects/<dirname>-<hash>.json)
  * - Fetch моделей через OpenAI API (v1/models) для custom-провайдеров
  * - запуск goose session --resume/--name --provider --model --history
  */
 
 import { execSync, spawn } from "node:child_process";
-import { readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import process from "node:process";
 import { autocomplete, confirm, intro, isCancel, log, outro, select, spinner, text } from "@clack/prompts";
 import pc from "picocolors";
@@ -23,7 +25,7 @@ import pc from "picocolors";
 
 const CONFIG_PATH = join(homedir(), ".config", "goose", "config.yaml");
 const CUSTOM_PROVIDERS_DIR = join(homedir(), ".config", "goose", "custom_providers");
-const SESSION_STORE_PATH = ".goose-tui.json";
+const CGOOSE_PROJECTS_DIR = join(homedir(), ".config", "cgoose", "projects");
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -46,7 +48,7 @@ interface ProviderInfo {
   authToken?: string;
 }
 
-interface SessionMeta {
+interface ProjectMeta {
   provider: string;
   model: string;
 }
@@ -127,21 +129,29 @@ function getAllSessions(): GooseSession[] {
   } catch { return []; }
 }
 
-function readSessionMeta(sessionName: string): SessionMeta | null {
-  if (!existsSync(SESSION_STORE_PATH)) return null;
+/** Get a stable project key: dirname + short hash of the full path */
+function getProjectKey(): string {
+  const dir = resolve(".");
+  const hash = createHash("sha256").update(dir).digest("hex").slice(0, 8);
+  return `${basename(dir)}-${hash}`;
+}
+
+function getProjectMetaPath(): string {
+  return join(CGOOSE_PROJECTS_DIR, `${getProjectKey()}.json`);
+}
+
+function readProjectMeta(): ProjectMeta | null {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return null;
   try {
-    const store: Record<string, SessionMeta> = JSON.parse(readFileSync(SESSION_STORE_PATH, "utf-8"));
-    return store[sessionName] ?? null;
+    return JSON.parse(readFileSync(path, "utf-8")) as ProjectMeta;
   } catch { return null; }
 }
 
-function writeSessionMeta(sessionName: string, meta: SessionMeta): void {
-  let store: Record<string, SessionMeta> = {};
-  if (existsSync(SESSION_STORE_PATH)) {
-    try { store = JSON.parse(readFileSync(SESSION_STORE_PATH, "utf-8")); } catch { /* ignore */ }
-  }
-  store[sessionName] = meta;
-  writeFileSync(SESSION_STORE_PATH, JSON.stringify(store, null, 2) + "\n");
+function writeProjectMeta(meta: ProjectMeta): void {
+  const dir = CGOOSE_PROJECTS_DIR;
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(getProjectMetaPath(), JSON.stringify(meta, null, 2) + "\n");
 }
 
 function generateSessionName(prefix: string): string {
@@ -172,7 +182,7 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
 // ─── Launch Goose ────────────────────────────────────────────────────────────
 
 function launchGoose(sessionName: string, provider: string, model: string, isNew: boolean): void {
-  writeSessionMeta(sessionName, { provider, model });
+  writeProjectMeta({ provider, model });
 
   const args = ["session"];
   if (!isNew) args.push("--resume");
@@ -225,9 +235,8 @@ async function main() {
   const sessionHints = new Map<string, string>();
 
   for (const s of dirSessions.slice(0, 50)) {
-    const meta = readSessionMeta(s.id);
-    const prov = s.provider_name ?? meta?.provider ?? "—";
-    const model = s.model_config?.model_name ?? meta?.model ?? "—";
+    const prov = s.provider_name ?? "—";
+    const model = s.model_config?.model_name ?? "—";
     const modelShort = model.length > 30 ? model.slice(0, 27) + "…" : model;
     const dateStr = s.created_at
       ? new Date(s.created_at).toLocaleDateString("ru-RU", {
@@ -266,7 +275,7 @@ async function main() {
   }
 
   let sessionName: string;
-  let lastMeta: SessionMeta | null = null;
+  let lastMeta: ProjectMeta | null = null;
   let isNewSession = false;
 
   if (selectedSession === "__new__" || selectedSession === "__empty__") {
@@ -288,7 +297,7 @@ async function main() {
     sessionName = (customName as string).trim() || suggested;
   } else {
     sessionName = selectedSession as string;
-    lastMeta = readSessionMeta(sessionName);
+    lastMeta = readProjectMeta();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
