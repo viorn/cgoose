@@ -41,10 +41,10 @@ Built with [Clack](https://github.com/natemoo-re/clack) prompts + [picocolors](h
 ### Data Flow
 ```
   Step 1: Session Selection (pick existing / create new / delete)
-  Step 2: Session Name (auto: project-YYYY-MM-DD-HH-mm or custom)
+  Step 2: Session Name (custom name or empty for goose auto-name from first message; placeholder: &lt;dirname&gt;-YYYY-MM-DD-HH-mm)
   Step 3: Provider Selection (from config.yaml, sorted by history + Ollama)
   Step 4: Model Selection (last used / history / manual / API fetch / Ollama list)
-  Step 5: Summary & Launch (goose session --name --provider --model)
+  Step 5: Summary & Launch (goose session [--name] --provider --model)
 ```
 
 ### Navigation
@@ -66,7 +66,7 @@ Entry point. Orchestrates the 5-step workflow as a `while (true)` state machine 
 - **`loadConfigEnvVars()`** — Injects top-level YAML keys into `process.env` so child processes inherit them (e.g., `OPENAI_API_KEY`).
 
 ### `launcher.ts` — Goose process launcher
-- **`launchGoose()`** — Spawns `goose session` with correct args (`--resume --history` for existing, `--name`, `--provider`, `--model`). Handles custom providers by setting `OPENAI_BASE_URL` + `OPENAI_API_KEY` env vars (clears conflicting vars first). Saves project meta before launching. Stdio: inherit.
+- **`launchGoose()`** — Spawns `goose session` with correct args (`--resume --history` for existing, `--name` only if non-empty, `--provider`, `--model`). Handles custom providers by setting `OPENAI_BASE_URL` + `OPENAI_API_KEY` env vars (clears conflicting vars first). Saves project meta before launching. Stdio: inherit.
 
 ### `models.ts` — Model discovery
 - **`detectOllama()`** — Hits `http://localhost:11434/api/tags` (2s timeout). Returns models with `supportsTools` flag based on capabilities.
@@ -84,7 +84,7 @@ Entry point. Orchestrates the 5-step workflow as a `while (true)` state machine 
 
 ### `utils.ts` — Utility functions
 - **`getCurrentDirName()`** — Returns basename of CWD.
-- **`generateSessionName()`** — Auto-name: `<dirname>-YYYY-MM-DD-HH-mm`.
+- **`generateSessionName()`** — Generates placeholder suggestion: `<dirname>-YYYY-MM-DD-HH-mm`. Actual auto-name is delegated to goose (from first message) when user leaves name empty.
 
 ---
 
@@ -93,7 +93,7 @@ Entry point. Orchestrates the 5-step workflow as a `while (true)` state machine 
 ### Session Management
 - List sessions for current directory (filtered by `working_dir`)
 - Fuzzy search across sessions
-- Create new with auto-name or custom name (validates uniqueness, no spaces)
+- Create new with custom name or empty for goose auto-name (validates uniqueness, no spaces; placeholder suggests &lt;dirname&gt;-YYYY-MM-DD-HH-mm)
 - Resume existing session
 - **Delete UI**: select individually (multiselect) or "clean all" for directory
 
@@ -115,6 +115,7 @@ Entry point. Orchestrates the 5-step workflow as a `while (true)` state machine 
 - Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
 - Resumes existing sessions with `--resume --history`
+- For new sessions: `--name` is omitted if name is empty (goose auto-names from first message)
 - Spawns goose with `stdio: inherit`; forwards exit code
 
 ---
