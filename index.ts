@@ -230,20 +230,25 @@ function generateSessionName(prefix: string): string {
 
 const OLLAMA_HOST = "http://localhost:11434";
 
-interface OllamaTag {
+interface OllamaModelInfo {
   name: string;
-  model: string;
+  supportsTools: boolean;
 }
 
-/** Check if Ollama is running and return available model names, or null */
-async function detectOllama(): Promise<string[] | null> {
+/** Check if Ollama is running and return available models with capabilities */
+async function detectOllama(): Promise<OllamaModelInfo[] | null> {
   try {
     const response = await fetch(`${OLLAMA_HOST}/api/tags`, {
       signal: AbortSignal.timeout(2_000),
     });
     if (!response.ok) return null;
     const data: any = await response.json();
-    const models: string[] = (data.models || []).map((m: any) => m.name).sort();
+    const models: OllamaModelInfo[] = (data.models || [])
+      .map((m: any) => ({
+        name: m.name,
+        supportsTools: (m.capabilities || []).includes("tools"),
+      }))
+      .sort((a: OllamaModelInfo, b: OllamaModelInfo) => a.name.localeCompare(b.name));
     return models.length > 0 ? models : null;
   } catch {
     return null;
@@ -552,12 +557,16 @@ async function main() {
         // Add local Ollama if running
         if (ollamaModels && ollamaModels.length > 0) {
           const isOllamaDefault = lastProviderRaw === "ollama";
+          const toolsCount = ollamaModels.filter((m) => m.supportsTools).length;
+          const hint = toolsCount > 0
+            ? `${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} (${toolsCount} with tools)`
+            : `${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} ⚠️ no tool support`;
           const opt = {
             label: isOllamaDefault
               ? `🦙 Ollama (local) ${pc.dim("←")}`
               : `🦙 Ollama (local)`,
             value: "ollama",
-            hint: `${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""}`,
+            hint,
           };
           if (isOllamaDefault) {
             providerOptions.unshift(opt);
@@ -597,9 +606,11 @@ async function main() {
           const lastModel = lastMeta?.provider === "ollama" ? lastMeta.model : null;
 
           const modelOptions = ollamaModels!.map((m) => ({
-            label: m === lastModel ? `${m} ${pc.dim("← last used")}` : m,
-            value: m,
-            hint: "",
+            label: m.name === lastModel
+              ? (m.supportsTools ? pc.green(`✦ ${m.name}`) : pc.yellow(`✦ ${m.name}`)) + ` ${pc.dim("← last used")}`
+              : m.supportsTools ? m.name : pc.yellow(`${m.name}`),
+            value: m.name,
+            hint: m.supportsTools ? pc.dim("tools ✅") : pc.dim("tools ❌ — may cause errors"),
           }));
 
           const selected = await autocomplete({
@@ -619,6 +630,23 @@ async function main() {
           }
 
           modelValue = selected as string;
+
+          // Warn if selected model doesn't support tools
+          const selectedModel = ollamaModels!.find((m) => m.name === modelValue);
+          if (selectedModel && !selectedModel.supportsTools) {
+            log.warn(pc.yellow(`⚠️ "${modelValue}" doesn't support tool calling. Goose uses tools extensively — expect limited functionality.`));
+            log.info(pc.dim("  💡 Models that support tools: llama3.x, qwen2.5, mistral, phi-4, etc."));
+            log.info(pc.dim("     Pull one: ollama pull llama3.2:3b"));
+            const proceed = await confirm({
+              message: "Continue anyway?",
+              initialValue: false,
+            });
+            if (isCancel(proceed) || !proceed) {
+              step = "model";
+              continue;
+            }
+          }
+
           step = "launch";
           continue;
         }
