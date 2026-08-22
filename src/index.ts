@@ -154,14 +154,6 @@ async function main() {
           sessionOptions.push({ label: pc.bold(name), value: s.id, hint });
         }
 
-        if (dirSessions.length === 0) {
-          sessionOptions.push({
-            label: pc.dim(pc.italic("(no sessions for this directory yet)")),
-            value: "__empty__",
-            hint: "",
-          });
-        }
-
         const selected = await autocomplete({
           message: `Session: ${pc.dim("(Esc ← back / exit)")}`,
           placeholder: "Type to filter sessions...",
@@ -183,7 +175,7 @@ async function main() {
           continue; // refresh session list
         }
 
-        if (selected === "__new__" || selected === "__empty__") {
+        if (selected === "__new__") {
           isNewSession = true;
           step = "session_name";
           continue;
