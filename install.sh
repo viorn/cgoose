@@ -3,6 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+echo "📦 Installing dependencies..."
+bun install
+
 echo "🔨 Compiling cgoose..."
 bun build ./index.ts --compile --outfile cgoose
 
