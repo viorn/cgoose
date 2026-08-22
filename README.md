@@ -27,23 +27,33 @@
 
 ## Install
 
+### From source
+
 ```bash
 git clone https://github.com/viorn/cgoose.git
 cd cgoose
 bun install
 ```
 
+### Compile & install (recommended)
+
+```bash
+./install.sh
+```
+
+This compiles `index.ts` into a standalone binary and copies it to `~/.local/bin/cgoose`.
+Make sure `~/.local/bin` is in your `PATH`.
+
 ## Usage
 
 ```bash
-bun run index.ts
+cgoose
 ```
 
-Or make executable and run directly:
+Or run directly from source:
 
 ```bash
-chmod +x index.ts
-./index.ts
+bun run index.ts
 ```
 
 ## Workflow
