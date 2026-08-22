@@ -9,7 +9,7 @@
  * - запоминает последний использованный провайдер/модель для проекта
  *   (в ~/.config/cgoose/projects/<dirname>-<hash>.json)
  * - Fetch моделей через OpenAI API (v1/models) для custom-провайдеров
- * - запуск goose session --resume/--name --provider --model --history
+ * - запуск goose session [--name] --provider --model [--resume --history]
  */
 
 import { execSync, spawn } from "node:child_process";
@@ -18,7 +18,7 @@ import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import process from "node:process";
-import { autocomplete, confirm, intro, isCancel, log, outro, select, spinner, text } from "@clack/prompts";
+import { autocomplete, confirm, intro, isCancel, log, outro, select, spinner, text, multiselect } from "@clack/prompts";
 import pc from "picocolors";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
@@ -131,6 +131,48 @@ function getAllSessions(): GooseSession[] {
   } catch { return []; }
 }
 
+
+
+/** Delete a session by ID from SQLite db, returns true on success */
+const SESSIONS_DB = join(homedir(), ".local/share/goose/sessions/sessions.db");
+
+function deleteSessionById(sessionId: string): boolean {
+  try {
+    const sql = [
+      "BEGIN;",
+      `DELETE FROM messages WHERE session_id = '${sessionId}';`,
+      `DELETE FROM usage_ledger WHERE session_id = '${sessionId}';`,
+      `DELETE FROM sessions WHERE id = '${sessionId}';`,
+      "COMMIT;",
+    ].join("\n");
+    execSync(`sqlite3 "${SESSIONS_DB}"`, {
+      input: sql,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Format a session for display */
+function formatSessionHint(s: GooseSession): { name: string; hint: string } {
+  const prov = s.provider_name ?? "—";
+  const model = s.model_config?.model_name ?? "—";
+  const modelShort = model.length > 30 ? model.slice(0, 27) + "…" : model;
+  const dateStr = s.created_at
+    ? new Date(s.created_at).toLocaleDateString("ru-RU", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "—";
+  const msgHint = s.message_count > 0 ? "(" + s.message_count + " msgs)" : "";
+  const hint = dateStr + " " + prov + " " + modelShort + " " + msgHint;
+  return { name: s.name || s.id, hint: hint.trim() };
+}
+
 /** Get a stable project key: dirname + short hash of the full path */
 function getProjectKey(): string {
   const dir = resolve(".");
@@ -190,8 +232,13 @@ function launchGoose(sessionName: string, provider: string, model: string, isNew
   writeProjectMeta({ provider, model });
 
   const args = ["session"];
-  if (!isNew) args.push("--resume");
-  args.push("--name", sessionName, "--provider", provider, "--model", model, "--history");
+  if (!isNew) {
+    args.push("--resume", "--history");
+  }
+  if (sessionName) {
+    args.push("--name", sessionName);
+  }
+  args.push("--provider", provider, "--model", model);
 
   console.log(
     `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
@@ -206,7 +253,78 @@ function launchGoose(sessionName: string, provider: string, model: string, isNew
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
+
+// ---- Session deletion dialog ------------------------------------------------
+
+async function handleDeleteSessions(
+  _allSessions: GooseSession[],
+  dirSessions: GooseSession[],
+): Promise<boolean> {
+  // 1) Choose mode
+  const mode = await select({
+    message: "Delete sessions:",
+    options: [
+      { value: "select", label: "Select individually" },
+      { value: "all", label: "Clean all sessions in this directory", hint: "(" + dirSessions.length + " sessions)" },
+      { value: "back", label: "\u2190 Go back" },
+    ],
+  });
+
+  if (isCancel(mode) || mode === "back") return false;
+
+  if (mode === "all") {
+    if (dirSessions.length === 0) {
+      log.info(pc.dim("No sessions in this directory."));
+      return false;
+    }
+    const confirmed = await confirm({
+      message: "Delete all " + dirSessions.length + " sessions in " + pc.cyan(resolve(".")) + "?",
+      initialValue: false,
+    });
+    if (isCancel(confirmed) || !confirmed) return false;
+
+    const s = spinner();
+    s.start("Deleting " + dirSessions.length + " sessions...");
+    let ok = 0, fail = 0;
+    for (const session of dirSessions) {
+      if (deleteSessionById(session.id)) ok++; else fail++;
+    }
+    s.stop("Done: " + ok + " deleted, " + fail + " failed");
+    return true;
+  }
+
+  // 2) Select individually via multiselect
+  const sessionOptions = dirSessions.map(function(s) {
+    const h = formatSessionHint(s);
+    return { label: h.name, value: s.id, hint: h.hint };
+  });
+
+  if (sessionOptions.length === 0) {
+    log.info(pc.dim("No sessions to delete."));
+    return false;
+  }
+
+  const selectedIDs = await multiselect({
+    message: "Select sessions to delete (Space to toggle, Enter to confirm):",
+    options: sessionOptions,
+    required: false,
+  });
+
+  if (isCancel(selectedIDs) || !selectedIDs || selectedIDs.length === 0) return false;
+
+  const s = spinner();
+  s.start("Deleting " + selectedIDs.length + " session(s)...");
+  let ok = 0, fail = 0;
+  for (const id of selectedIDs as string[]) {
+    if (deleteSessionById(id)) ok++; else fail++;
+  }
+  s.stop("Done: " + ok + " deleted, " + fail + " failed");
+  return true;
+}
+
 // ─── Main TUI ────────────────────────────────────────────────────────────────
+
+type Step = "session" | "session_name" | "provider" | "model" | "launch";
 
 async function main() {
   console.clear();
@@ -215,278 +333,310 @@ async function main() {
   const projectName = getCurrentDirName();
   const sessionPrefix = projectName;
   const configProviders = getConfigProviders();
-  const allSessions = getAllSessions();
-  const cwd = resolve(".");
-  const dirSessions = allSessions.filter((s) => s.working_dir === cwd);
 
   if (configProviders.length === 0) {
-    log.error(pc.red(`✖ No enabled providers found in ${CONFIG_PATH}`));
+    log.error(pc.red('\u2716 No enabled providers found in ' + CONFIG_PATH));
     log.info(pc.dim("  Run 'goose configure' to set up a provider first."));
     process.exit(1);
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 1: Session — interactive autocomplete
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const sessionOptions: { label: string; value: string; hint?: string }[] = [
-    {
-      label: pc.green("✦ Create new session"),
-      value: "__new__",
-      hint: `prefix: ${sessionPrefix}`,
-    },
-  ];
-
-  const sessionHints = new Map<string, string>();
-
-  for (const s of dirSessions.slice(0, 50)) {
-    const prov = s.provider_name ?? "—";
-    const model = s.model_config?.model_name ?? "—";
-    const modelShort = model.length > 30 ? model.slice(0, 27) + "…" : model;
-    const dateStr = s.created_at
-      ? new Date(s.created_at).toLocaleDateString("ru-RU", {
-          day: "2-digit", month: "2-digit", year: "numeric",
-          hour: "2-digit", minute: "2-digit",
-        })
-      : "—";
-    const msgHint = s.message_count > 0 ? `(${s.message_count} msgs)` : "";
-    const hint = `${dateStr} ${prov} ${modelShort} ${msgHint}`.trim();
-    sessionHints.set(s.id, hint);
-    sessionOptions.push({ label: pc.bold(s.id), value: s.id, hint });
-  }
-
-  if (dirSessions.length === 0) {
-    sessionOptions.push({
-      label: pc.dim(pc.italic("(no sessions for this directory yet)")),
-      value: "__empty__",
-      hint: "",
-    });
-  }
-
-  const selectedSession = await autocomplete({
-    message: "Session:",
-    placeholder: "Type to filter sessions...",
-    options: sessionOptions,
-    maxItems: 12,
-    filter: (search, opt) => {
-      const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
-      return haystack.includes(search.toLowerCase());
-    },
-  });
-
-  if (isCancel(selectedSession)) {
-    outro(pc.yellow("See you next time! 👋"));
-    process.exit(0);
-  }
-
-  let sessionName: string;
-  let lastMeta: ProjectMeta | null = null;
+  // State shared across steps
+  let step: Step = "session";
+  let sessionName = "";
   let isNewSession = false;
-
-  if (selectedSession === "__new__" || selectedSession === "__empty__") {
-    isNewSession = true;
-    const suggested = generateSessionName(sessionPrefix);
-    const customName = await text({
-      message: "Session name:",
-      placeholder: suggested,
-      defaultValue: suggested,
-      validate: (val) => {
-        if (!val || val.trim().length === 0) return "Name cannot be empty";
-        if (val.includes(" ")) return "Name cannot contain spaces";
-        if (allSessions.find((s) => s.id === val.trim())) return `Session "${val}" already exists`;
-        return;
-      },
-    });
-
-    if (isCancel(customName)) process.exit(0);
-    sessionName = (customName as string).trim() || suggested;
-  } else {
-    sessionName = selectedSession as string;
-    lastMeta = readProjectMeta();
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 2: Provider — interactive autocomplete
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const lastProviderRaw = lastMeta?.provider ?? null;
-  const sessionObj = allSessions.find((s) => s.id === sessionName);
-  const sessionProvider = sessionObj?.provider_name ?? null;
-
-  // Build provider options — last used first for quick Enter
-  const providerOptions: { label: string; value: string; hint?: string }[] = [];
-
-  for (const p of configProviders) {
-    let hint = p.model;
-    let isDefault = false;
-
-    if (p.name === lastProviderRaw) {
-      hint += ` ${pc.dim("(last used)")}`;
-      isDefault = true;
-    } else if (p.name === sessionProvider && !lastProviderRaw) {
-      hint += ` ${pc.dim("(session provider)")}`;
-      isDefault = true;
-    }
-
-    const opt = {
-      label: isDefault ? `${p.name} ${pc.dim("←")}` : p.name,
-      value: p.name,
-      hint,
-    };
-
-    // Insert last used at the very top, rest at the end
-    if (p.name === lastProviderRaw) {
-      providerOptions.unshift(opt);
-    } else {
-      providerOptions.push(opt);
-    }
-  }
-
-  const selectedProvider = await autocomplete({
-    message: "Provider:",
-    placeholder: "Type to filter providers...",
-    options: providerOptions,
-    maxItems: 10,
-    filter: (search, opt) => {
-      const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
-      return haystack.includes(search.toLowerCase());
-    },
-  });
-
-  if (isCancel(selectedProvider)) process.exit(0);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 3: Model — interactive autocomplete with API fetch option
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const selectedProviderName = selectedProvider as string;
-  const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
-  const defaultModel = lastMeta?.provider === selectedProviderName
-    ? lastMeta.model
-    : providerCfg?.model ?? "";
-
-  const supportsApiFetch = providerCfg?.engine === "openai" && !!providerCfg?.baseUrl;
-
+  let selectedProviderName = "";
   let modelValue = "";
+  let lastAllSessions: GooseSession[] = [];
 
-  // Build model selection options — default model first for quick Enter-spam
-  const modelOptions: { label: string; value: string; hint?: string }[] = [];
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Navigation loop — each Esc/cancel goes back one step
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // 1) Default model (last used or from config) — always first for quick Enter
-  if (defaultModel) {
-    modelOptions.push({
-      label: pc.green(`✦ ${defaultModel}`),
-      value: defaultModel,
-      hint: pc.dim("last used"),
-    });
-  }
+  while (true) {
+    switch (step) {
+      // ─── STEP 1: Session selection ──────────────────────────────────────
+      case "session": {
+        const allSessions = getAllSessions();
+        lastAllSessions = allSessions;
+        const cwd = resolve(".");
+        const dirSessions = allSessions.filter((s) => s.working_dir === cwd);
 
-  // 2) Type manually
-  modelOptions.push({
-    label: pc.bold("✎ Type manually"),
-    value: "__manual__",
-    hint: defaultModel ? pc.dim(`default: ${defaultModel}`) : "",
-  });
+        const sessionOptions: { label: string; value: string; hint?: string }[] = [];
 
-  // 3) Fetch from API (if supported) — last resort
-  if (supportsApiFetch) {
-    modelOptions.push({
-      label: pc.cyan("🔄 Fetch from API"),
-      value: "__api_fetch__",
-      hint: providerCfg.baseUrl,
-    });
-  }
-
-  const modelChoice = await autocomplete({
-    message: `Model for ${pc.cyan(selectedProviderName)}:`,
-    placeholder: "Type to search or select an option...",
-    options: modelOptions,
-    maxItems: 12,
-    filter: (search, opt) => {
-      const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
-      return haystack.includes(search.toLowerCase());
-    },
-  });
-
-  if (isCancel(modelChoice)) process.exit(0);
-
-  if (modelChoice === "__api_fetch__") {
-    // ── Fetch models from API ─────────────────────────────────────────────
-    try {
-      const apiModels = await fetchModelsFromApi(providerCfg);
-
-      if (apiModels.length === 0) {
-        log.warn(pc.yellow("No models returned from API."));
-        const typed = await text({
-          message: `Model for ${pc.cyan(selectedProviderName)}:`,
-          placeholder: defaultModel || "gpt-4o",
-          defaultValue: defaultModel,
+        sessionOptions.push({
+          label: pc.green("\u2726 Create new session"),
+          value: "__new__",
+          hint: "prefix: " + sessionPrefix,
         });
-        if (isCancel(typed)) process.exit(0);
-        modelValue = (typed as string).trim() || defaultModel;
-      } else {
-        const apiModelChoice = await autocomplete({
-          message: `Select model from ${pc.cyan(providerCfg.baseUrl!)}:`,
-          placeholder: `Type to filter ${apiModels.length} models...`,
-          options: apiModels.map((m) => ({
-            label: m,
-            value: m,
+
+        if (dirSessions.length > 0) {
+          sessionOptions.push({
+            label: pc.yellow("  Delete sessions..."),
+            value: "__delete__",
+            hint: "(" + dirSessions.length + " available)",
+          });
+        }
+
+        for (let i = 0; i < dirSessions.length && i < 50; i++) {
+          const s = dirSessions[i];
+          const { name, hint } = formatSessionHint(s);
+          sessionOptions.push({ label: pc.bold(name), value: s.id, hint });
+        }
+
+        if (dirSessions.length === 0) {
+          sessionOptions.push({
+            label: pc.dim(pc.italic("(no sessions for this directory yet)")),
+            value: "__empty__",
             hint: "",
-          })),
-          maxItems: 15,
+          });
+        }
+
+        const selected = await autocomplete({
+          message: `Session: ${pc.dim("(Esc ← back / exit)")}`,
+          placeholder: "Type to filter sessions...",
+          options: sessionOptions,
+          maxItems: 12,
           filter: (search, opt) => {
-            if (!search) return true;
-            return opt.value.toLowerCase().includes(search.toLowerCase());
+            const haystack = opt.value + " " + opt.label + " " + (opt.hint || "");
+            return haystack.toLowerCase().includes(search.toLowerCase());
           },
         });
 
-        if (isCancel(apiModelChoice)) process.exit(0);
-        modelValue = apiModelChoice as string;
+        if (isCancel(selected)) {
+          outro(pc.yellow("See you next time!"));
+          process.exit(0);
+        }
+
+        if (selected === "__delete__") {
+          await handleDeleteSessions(allSessions, dirSessions);
+          continue; // refresh session list
+        }
+
+        if (selected === "__new__" || selected === "__empty__") {
+          isNewSession = true;
+          step = "session_name";
+          continue;
+        }
+
+        sessionName = selected as string;
+        isNewSession = false;
+        step = "provider";
+        continue;
       }
-    } catch (err) {
-      log.error(pc.red(`Failed to fetch models: ${err}`));
-      const typed = await text({
-        message: `Model for ${pc.cyan(selectedProviderName)}:`,
-        placeholder: defaultModel || "e.g., deepseek/deepseek-v4-flash",
-        defaultValue: defaultModel,
-      });
-      if (isCancel(typed)) process.exit(0);
-      modelValue = (typed as string).trim() || defaultModel;
-    }
-  } else if (modelChoice === "__manual__") {
-    const typed = await text({
-      message: `Model for ${pc.cyan(selectedProviderName)}:`,
-      placeholder: defaultModel || "e.g., deepseek/deepseek-v4-flash",
-      defaultValue: defaultModel,
-      validate: (val) => (!val || val.trim().length === 0) ? "Model name cannot be empty" : undefined,
-    });
 
-    if (isCancel(typed)) process.exit(0);
-    modelValue = (typed as string).trim() || defaultModel;
-  } else {
-    // User selected a specific model from the list
-    modelValue = modelChoice as string;
-  }
+      // ─── STEP 2: Session name (only for new sessions) ───────────────────
+      case "session_name": {
+        const allSessions = getAllSessions();
+        const suggested = generateSessionName(sessionPrefix);
+        const customName = await text({
+          message: `Session name: ${pc.dim("(press Enter for auto-name from first message)")}`,
+          placeholder: suggested,
+          validate: (val) => {
+            if (val && val.includes(" ")) return "Name cannot contain spaces";
+            if (val && allSessions.find((s) => s.id === val.trim())) return "Session '" + val + "' already exists";
+            return;
+          },
+        });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 4: Summary & Launch
-  // ═══════════════════════════════════════════════════════════════════════════
+        if (isCancel(customName)) {
+          step = "session"; // back to session list
+          continue;
+        }
 
-  outro(
-    `${pc.green("✓")} Configuration complete:
-  ${pc.bold("Session")}:  ${pc.cyan(sessionName)}
+        sessionName = (customName as string).trim();
+        step = "provider";
+        continue;
+      }
+
+      // ─── STEP 3: Provider selection ─────────────────────────────────────
+      case "provider": {
+        const lastMeta = isNewSession ? null : readProjectMeta();
+        const lastProviderRaw = lastMeta?.provider ?? null;
+        const sessionObj = lastAllSessions.find((s) => s.id === sessionName);
+        const sessionProvider = sessionObj?.provider_name ?? null;
+
+        const providerOptions: { label: string; value: string; hint?: string }[] = [];
+
+        for (const p of configProviders) {
+          let hint = p.model;
+          let isDefault = false;
+
+          if (p.name === lastProviderRaw) {
+            hint += ` ${pc.dim("(last used)")}`;
+            isDefault = true;
+          } else if (p.name === sessionProvider && !lastProviderRaw) {
+            hint += ` ${pc.dim("(session provider)")}`;
+            isDefault = true;
+          }
+
+          const opt = {
+            label: isDefault ? `${p.name} ${pc.dim("←")}` : p.name,
+            value: p.name,
+            hint,
+          };
+
+          if (p.name === lastProviderRaw) {
+            providerOptions.unshift(opt);
+          } else {
+            providerOptions.push(opt);
+          }
+        }
+
+        const selected = await autocomplete({
+          message: `Provider: ${pc.dim("(Esc ← back to sessions)")}`,
+          placeholder: "Type to filter providers...",
+          options: providerOptions,
+          maxItems: 10,
+          filter: (search, opt) => {
+            const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
+            return haystack.includes(search.toLowerCase());
+          },
+        });
+
+        if (isCancel(selected)) {
+          step = "session"; // back to session list
+          continue;
+        }
+
+        selectedProviderName = selected as string;
+        step = "model";
+        continue;
+      }
+
+      // ─── STEP 4: Model selection ────────────────────────────────────────
+      case "model": {
+        if (!selectedProviderName) { step = "provider"; continue; }
+
+        const lastMeta = isNewSession ? null : readProjectMeta();
+        const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
+        const defaultModel = lastMeta?.provider === selectedProviderName
+          ? lastMeta.model
+          : providerCfg?.model ?? "";
+
+        const supportsApiFetch = providerCfg?.engine === "openai" && !!providerCfg?.baseUrl;
+
+        const modelOptions: { label: string; value: string; hint?: string }[] = [];
+
+        if (defaultModel) {
+          modelOptions.push({
+            label: pc.green(`✦ ${defaultModel}`),
+            value: defaultModel,
+            hint: pc.dim("last used"),
+          });
+        }
+
+        modelOptions.push({
+          label: pc.bold("✎ Type manually"),
+          value: "__manual__",
+          hint: defaultModel ? pc.dim(`default: ${defaultModel}`) : "",
+        });
+
+        if (supportsApiFetch) {
+          modelOptions.push({
+            label: pc.cyan("🔄 Fetch from API"),
+            value: "__api_fetch__",
+            hint: providerCfg.baseUrl,
+          });
+        }
+
+        const modelChoice = await autocomplete({
+          message: `Model for ${pc.cyan(selectedProviderName)}: ${pc.dim("(Esc ← back to provider)")}`,
+          placeholder: "Type to search or select an option...",
+          options: modelOptions,
+          maxItems: 12,
+          filter: (search, opt) => {
+            const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
+            return haystack.includes(search.toLowerCase());
+          },
+        });
+
+        if (isCancel(modelChoice)) {
+          step = "provider"; // back to provider
+          continue;
+        }
+
+        if (modelChoice === "__api_fetch__") {
+          try {
+            const apiModels = await fetchModelsFromApi(providerCfg);
+
+            if (apiModels.length === 0) {
+              log.warn(pc.yellow("No models returned from API."));
+              const typed = await text({
+                message: `Model for ${pc.cyan(selectedProviderName)}: ${pc.dim("(Esc ← back)")}`,
+                placeholder: defaultModel || "gpt-4o",
+                defaultValue: defaultModel,
+              });
+              if (isCancel(typed)) { step = "model"; continue; }
+              modelValue = (typed as string).trim() || defaultModel;
+            } else {
+              const apiModelChoice = await autocomplete({
+                message: `Select model from ${pc.cyan(providerCfg.baseUrl!)}: ${pc.dim("(Esc ← back)")}`,
+                placeholder: `Type to filter ${apiModels.length} models...`,
+                options: apiModels.map((m) => ({
+                  label: m,
+                  value: m,
+                  hint: "",
+                })),
+                maxItems: 15,
+                filter: (search, opt) => {
+                  if (!search) return true;
+                  return opt.value.toLowerCase().includes(search.toLowerCase());
+                },
+              });
+
+              if (isCancel(apiModelChoice)) { step = "model"; continue; }
+              modelValue = apiModelChoice as string;
+            }
+          } catch (err) {
+            log.error(pc.red(`Failed to fetch models: ${err}`));
+            const typed = await text({
+              message: `Model for ${pc.cyan(selectedProviderName)}: ${pc.dim("(Esc ← back)")}`,
+              placeholder: defaultModel || "e.g., deepseek/deepseek-v4-flash",
+              defaultValue: defaultModel,
+            });
+            if (isCancel(typed)) { step = "model"; continue; }
+            modelValue = (typed as string).trim() || defaultModel;
+          }
+        } else if (modelChoice === "__manual__") {
+          const typed = await text({
+            message: `Model for ${pc.cyan(selectedProviderName)}: ${pc.dim("(Esc ← back)")}`,
+            placeholder: defaultModel || "e.g., deepseek/deepseek-v4-flash",
+            defaultValue: defaultModel,
+            validate: (val) => (!val || val.trim().length === 0) ? "Model name cannot be empty" : undefined,
+          });
+
+          if (isCancel(typed)) { step = "model"; continue; }
+          modelValue = (typed as string).trim() || defaultModel;
+        } else {
+          modelValue = modelChoice as string;
+        }
+
+        step = "launch";
+        continue;
+      }
+
+      // ─── STEP 5: Summary & Launch ───────────────────────────────────────
+      case "launch": {
+        const displayName = sessionName || "(auto — from first message)";
+        outro(
+          `${pc.green("✓")} Configuration complete:
+  ${pc.bold("Session")}:  ${pc.cyan(displayName)}
   ${pc.bold("Provider")}: ${pc.yellow(selectedProviderName)}
   ${pc.bold("Model")}:    ${pc.magenta(modelValue)}`,
-  );
+        );
 
-  const shouldLaunch = await confirm({ message: "Launch Goose now?", initialValue: true });
+        const shouldLaunch = await confirm({ message: `Launch Goose now? ${pc.dim("(Esc ← back to sessions)")}`, initialValue: true });
 
-  if (isCancel(shouldLaunch) || !shouldLaunch) {
-    outro(pc.yellow("See you next time! 👋"));
-    process.exit(0);
+        if (isCancel(shouldLaunch) || !shouldLaunch) {
+          step = "session"; // back to the beginning
+          continue;
+        }
+
+        launchGoose(sessionName, selectedProviderName, modelValue, isNewSession);
+        return; // never reached — launchGoose replaces process
+      }
+    }
   }
-
-  launchGoose(sessionName, selectedProviderName, modelValue, isNewSession);
 }
 
 main().catch((err) => {

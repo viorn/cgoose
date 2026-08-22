@@ -59,7 +59,7 @@ bun run index.ts
 ## Workflow
 
 1. **Session** — pick an existing session, create a new one, or delete sessions for the current directory
-2. **Name** (new sessions only) — auto-generated as `project-YYYY-MM-DD-HH-mm`, or type your own
+2. **Name** (new sessions only) — optional. Leave empty for Goose to auto-name from the first message
 3. **Provider** — select from enabled providers in your Goose config
 4. **Model** — choose last-used, type manually, or fetch from API (OpenAI-compatible providers)
 5. **Launch** — review summary and confirm — Goose starts with your selection
