@@ -1,0 +1,4 @@
+[build]
+entry = "./index.ts"
+outdir = "./dist"
+minify = true

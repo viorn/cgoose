@@ -2,22 +2,61 @@
 /**
  * cgoose — TUI Wrapper for Goose CLI
  *
- * PTY-обёртка вокруг goose session:
- *   - Ctrl+P — смена модели/провайдера (через /model внутри goose)
- *   - Ctrl+F — форк текущей сессии
- *   - Ctrl+Q — выход
- *   - Ctrl+C — пробрасывается в goose (он сам обрабатывает двойной Ctrl+C)
+ * Usage: bun run wrapper.ts [options]
+ *   --provider <name>   Provider name (required)
+ *   --model <name>      Model name (required)
+ *   --session-id <id>   Resume existing session by ID
+ *   --session-name <n>  Session name (for new or resume-by-name)
+ *   --resume            Resume last session or by session-id/name
+ *   --fork              Fork an existing session
+ *   --fresh             Start a fresh session (default if no --resume/--fork)
+ *
+ * Hotkeys (inside session):
+ *   Ctrl+P — change model/provider
+ *   Ctrl+F — fork current session
+ *   Ctrl+Q — quit wrapper
+ *   Ctrl+C — forwarded to goose
  */
 import { spawn, Terminal } from "bun";
 import process from "node:process";
 import path from "node:path";
 import {
-  readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync,
+  readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { intro, outro, isCancel, log, select, confirm, text } from "@clack/prompts";
 import pc from "picocolors";
+
+// ─── CLI args ──────────────────────────────────────────────────────────────
+interface WrapperArgs {
+  provider: string;
+  model: string;
+  sessionId?: string;
+  sessionName?: string;
+  resume: boolean;
+  fork: boolean;
+  fresh: boolean;
+}
+
+function parseArgs(): WrapperArgs {
+  const args = process.argv.slice(2);
+  const get = (flag: string): string | undefined => {
+    const i = args.indexOf(flag);
+    return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+  };
+  const has = (flag: string): boolean => args.includes(flag);
+
+  return {
+    provider: get("--provider") || "",
+    model: get("--model") || "",
+    sessionId: get("--session-id"),
+    sessionName: get("--session-name"),
+    resume: has("--resume"),
+    fork: has("--fork"),
+    fresh: has("--fresh") || (!has("--resume") && !has("--fork")),
+  };
+}
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 const CONFIG_PATH = path.join(homedir(), ".config", "goose", "config.yaml");
@@ -39,13 +78,9 @@ function parseYamlProviders(raw: string): ProviderInfo[] {
   let inProviders = false;
   let curName = "";
   let curEnabled = false;
-
   for (const rl of lines) {
     const line = rl.trimEnd();
-    if (line.startsWith("providers:")) {
-      inProviders = true;
-      continue;
-    }
+    if (line.startsWith("providers:")) { inProviders = true; continue; }
     if (!inProviders) continue;
     if (!line.startsWith(" ") && !line.startsWith("\t") && line.length > 0 && !line.startsWith("#")) {
       const ci = line.indexOf(":");
@@ -53,19 +88,15 @@ function parseYamlProviders(raw: string): ProviderInfo[] {
     }
     const t = line.trim();
     if (t.endsWith(":") && !t.startsWith("-") && t.length > 1) {
-      curName = t.slice(0, -1);
-      curEnabled = false;
-      continue;
+      curName = t.slice(0, -1); curEnabled = false; continue;
     }
     if (t.startsWith("enabled:")) {
-      curEnabled = t.split("enabled:")[1]?.trim() === "true";
-      continue;
+      curEnabled = t.split("enabled:")[1]?.trim() === "true"; continue;
     }
     if (t.startsWith("model:") && curName && curEnabled) {
       const m = t.split("model:")[1]?.trim();
       if (m) result.push({ name: curName, model: m });
-      curName = "";
-      curEnabled = false;
+      curName = ""; curEnabled = false;
     }
   }
   return result;
@@ -82,9 +113,7 @@ function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
       p.engine = d.engine || "openai";
       p.baseUrl = d.base_url || "";
       p.authToken = auth.replace(/^Bearer\s+/i, "");
-    } catch {
-      /* skip */
-    }
+    } catch { /* skip */ }
   }
   return providers;
 }
@@ -103,16 +132,23 @@ function getProjectKey(): string {
 function readProjectMeta(): any {
   const p = path.join(CGOOSE_DIR, getProjectKey() + ".json");
   if (!existsSync(p)) return null;
-  try {
-    return JSON.parse(readFileSync(p, "utf-8"));
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; }
 }
 
 function writeProjectMeta(m: any): void {
   if (!existsSync(CGOOSE_DIR)) mkdirSync(CGOOSE_DIR, { recursive: true });
   writeFileSync(path.join(CGOOSE_DIR, getProjectKey() + ".json"), JSON.stringify(m, null, 2) + "\n");
+}
+
+// ─── Session list (for resume detection) ───────────────────────────────────
+function listSessions(): any[] {
+  try {
+    const out = Bun.spawnSync(["goose", "session", "list", "--format", "json"], { env: { ...process.env } });
+    const text = out.stdout.toString();
+    const s = text.indexOf("["); const e = text.lastIndexOf("]");
+    if (s === -1 || e === -1) return [];
+    return JSON.parse(text.slice(s, e + 1));
+  } catch { return []; }
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -127,38 +163,33 @@ async function launchGoose(
   provider: string,
   model: string,
   sessionId?: string | null,
+  sessionName?: string | null,
   options?: { fork?: boolean; fresh?: boolean },
 ): Promise<void> {
   const args: string[] = ["session"];
+
   if (sessionId) {
     args.push("--resume", "--session-id", sessionId);
+  } else if (sessionName && !options?.fresh) {
+    // Try to resume by name if session exists
+    args.push("--resume", "--name", sessionName);
   } else if (options?.fork) {
     args.push("--resume", "--fork", "--history");
   } else if (!options?.fresh) {
     args.push("--resume", "--history");
+  } else if (sessionName) {
+    // New session with a name
+    args.push("--name", sessionName);
   }
   args.push("--provider", provider, "--model", model);
 
   console.log(
-    "\n" +
-      pc.green("Starting Goose") +
-      "\n  " +
-      pc.dim("Provider:") +
-      " " +
-      pc.yellow(provider) +
-      "\n  " +
-      pc.dim("Model:") +
-      " " +
-      pc.magenta(model) +
-      "\n  " +
-      pc.dim("Mode:") +
-      " " +
-      (options?.fork ? "fork" : sessionId ? "resume" : "new") +
-      "\n  " +
-      pc.dim("Command:") +
-      " goose " +
-      args.join(" ") +
-      "\n",
+    "\n" + pc.green("🐥") + " " + pc.bold("Starting Goose session...") +
+    "\n  " + pc.dim("Provider:") + " " + pc.yellow(provider) +
+    "\n  " + pc.dim("Model:") + " " + pc.magenta(model) +
+    "\n  " + pc.dim("Mode:") + " " + (options?.fork ? "fork" : sessionId ? "resume-by-id" : sessionName && !options?.fresh ? "resume-by-name" : "new") +
+    "\n  " + pc.dim("Session:") + " " + pc.cyan(sessionName || sessionId || "(auto)") +
+    "\n",
   );
 
   const g = spawn(["goose", ...args], {
@@ -186,9 +217,7 @@ function pipeGooseOutput(g: any): void {
           if (done) break;
           process.stdout.write(decoder.decode(value, { stream: true }));
         }
-      } catch {
-        /* terminated */
-      }
+      } catch { /* terminated */ }
     })();
   }
   if (g.stderr) {
@@ -201,14 +230,12 @@ function pipeGooseOutput(g: any): void {
           if (done) break;
           process.stderr.write(decoder.decode(value, { stream: true }));
         }
-      } catch {
-        /* terminated */
-      }
+      } catch { /* terminated */ }
     })();
   }
 }
 
-// ─── Model change dialog ──────────────────────────────────────────────────────
+// ─── Model change dialog ────────────────────────────────────────────────────
 async function modelDialog(
   currentProv: string,
   currentModel_: string,
@@ -218,65 +245,62 @@ async function modelDialog(
     log.error(pc.red("No providers configured"));
     return null;
   }
-
   const meta = readProjectMeta();
   const lastProv = meta?.provider || "";
-
   const sel = await select({
     message: "Select provider for model change",
     options: providers.map((p) => ({
-      label: p.name === lastProv ? p.name + " " + pc.dim("\u2190 last") : p.name,
+      label: p.name === lastProv ? p.name + " " + pc.dim("← last") : p.name,
       value: p.name,
       hint: p.model,
     })),
   });
-
   if (isCancel(sel)) return null;
-
   const cfg = providers.find((x) => x.name === sel);
-  const def =
-    (meta?.provider === sel ? meta.model : null) || cfg?.model || currentModel_;
-
+  const def = (meta?.provider === sel ? meta.model : null) || cfg?.model || currentModel_;
   const res = await text({
     message: "Model for " + pc.cyan(sel),
     placeholder: def,
   });
-
   if (isCancel(res)) return null;
   const modelName = (res || "").trim() || def;
   return { provider: sel, model: modelName };
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
-  console.clear();
-  intro(
-    pc.bgCyan(pc.black(" cgoose-wrapper ")) + pc.dim(" — PTY wrapper for Goose"),
-  );
+  const cliArgs = parseArgs();
 
-  const providers = getProviders();
-  if (providers.length === 0) {
-    log.error(pc.red("No providers found in " + CONFIG_PATH));
+  if (!cliArgs.provider || !cliArgs.model) {
+    console.error(pc.red("Usage: bun run wrapper.ts --provider <name> --model <name> [--session-id <id>] [--session-name <n>] [--resume] [--fork] [--fresh]"));
     process.exit(1);
   }
 
-  const meta = readProjectMeta();
-  const defP = meta?.provider || providers[0].name;
-  const defM = meta?.model || providers[0].model;
+  console.clear();
+  intro(pc.bgCyan(pc.black(" cgoose-wrapper ")) + pc.dim(" — PTY wrapper"));
 
-  log.info(
-    "  " +
-      pc.dim("Provider:") +
-      " " +
-      pc.yellow(defP) +
-      "\n  " +
-      pc.dim("Model:") +
-      " " +
-      pc.magenta(defM),
+  writeProjectMeta({ provider: cliArgs.provider, model: cliArgs.model });
+
+  // Detect latest session if --resume without specific session-id/name
+  let sessionId = cliArgs.sessionId;
+  let sessionName = cliArgs.sessionName;
+
+  if (cliArgs.resume && !sessionId && !sessionName) {
+    const sessions = listSessions();
+    const cwd = path.resolve(".");
+    const dirSessions = sessions.filter((s: any) => s.working_dir === cwd);
+    if (dirSessions.length > 0) {
+      sessionId = dirSessions[0].id;
+    }
+  }
+
+  await launchGoose(
+    cliArgs.provider,
+    cliArgs.model,
+    sessionId || null,
+    sessionName || null,
+    { fork: cliArgs.fork, fresh: cliArgs.fresh },
   );
-
-  await launchGoose(defP, defM, null, { fresh: true });
-  writeProjectMeta({ provider: defP, model: defM });
 
   // Terminal raw mode
   const term = new Terminal({
@@ -294,11 +318,7 @@ async function main() {
     const c = process.stdout.columns;
     const r = process.stdout.rows;
     if (c && r && currentGoose) {
-      try {
-        (currentGoose as any).terminal?.resize(r, c);
-      } catch {
-        /* ignore */
-      }
+      try { (currentGoose as any).terminal?.resize(r, c); } catch { /* ignore */ }
     }
   }
   process.stdout.on("resize", handleResize);
@@ -314,28 +334,12 @@ async function main() {
         term.setRawMode(false);
         const result = await modelDialog(currentProvider, currentModel);
         if (result && currentGoose && !currentGoose.killed) {
-          const cmd =
-            "/model --provider " + result.provider + " " + result.model + "\n";
-          console.log(
-            pc.yellow(
-              "\n  \u2192 Switching to " +
-                result.provider +
-                "/" +
-                result.model +
-                "...\n",
-            ),
-          );
-          try {
-            currentPtyWriter!.write(new TextEncoder().encode(cmd));
-          } catch (e) {
-            log.error(pc.red("Failed: " + e));
-          }
+          const cmd = "/model --provider " + result.provider + " " + result.model + "\n";
+          console.log(pc.yellow("\n  → Switching to " + result.provider + "/" + result.model + "...\n"));
+          try { currentPtyWriter!.write(new TextEncoder().encode(cmd)); } catch (e) { log.error(pc.red("Failed: " + e)); }
           currentProvider = result.provider;
           currentModel = result.model;
-          writeProjectMeta({
-            provider: currentProvider,
-            model: currentModel,
-          });
+          writeProjectMeta({ provider: currentProvider, model: currentModel });
         }
         term.setRawMode(true);
       }, 0);
@@ -350,21 +354,15 @@ async function main() {
           message: "Fork this session? A copy will be created and resumed.",
           initialValue: true,
         });
-        if (!confirmed) {
-          term.setRawMode(true);
-          return;
-        }
+        if (!confirmed) { term.setRawMode(true); return; }
         console.log(pc.yellow("\n  Forking session...\n"));
         try { currentPtyWriter?.close(); } catch {}
         try { currentGoose?.kill("SIGTERM"); } catch {}
         await Bun.sleep(150);
         currentGoose = null;
         currentPtyWriter = null;
-        await launchGoose(currentProvider, currentModel, null, { fork: true });
-        writeProjectMeta({
-          provider: currentProvider,
-          model: currentModel,
-        });
+        await launchGoose(currentProvider, currentModel, null, null, { fork: true });
+        writeProjectMeta({ provider: currentProvider, model: currentModel });
         if (currentGoose) pipeGooseOutput(currentGoose);
         term.setRawMode(true);
       }, 0);
@@ -379,14 +377,11 @@ async function main() {
           message: "Quit wrapper? Session will be saved.",
           initialValue: true,
         });
-        if (!confirmed) {
-          term.setRawMode(true);
-          return;
-        }
+        if (!confirmed) { term.setRawMode(true); return; }
         wrapperRunning = false;
         try { currentPtyWriter?.close(); } catch {}
         try { currentGoose?.kill("SIGTERM"); } catch {}
-        console.log(pc.green("\n\u2713 Bye!"));
+        console.log(pc.green("\n✓ Bye!"));
         process.exit(0);
       }, 0);
       return;
@@ -394,9 +389,7 @@ async function main() {
 
     // Ctrl+C (0x03) — Forward to goose
     if (k === "\x03") {
-      if (currentPtyWriter) {
-        try { currentPtyWriter.write(new TextEncoder().encode(k)); } catch {}
-      }
+      if (currentPtyWriter) { try { currentPtyWriter.write(new TextEncoder().encode(k)); } catch {} }
       return;
     }
 
@@ -408,12 +401,7 @@ async function main() {
 
   // Wait for goose to exit
   if (currentGoose) {
-    try {
-      await currentGoose.exited;
-      wrapperRunning = false;
-    } catch {
-      /* killed externally */
-    }
+    try { await currentGoose.exited; wrapperRunning = false; } catch { /* killed */ }
   }
 
   // Cleanup
@@ -421,7 +409,7 @@ async function main() {
   process.stdout.removeListener("resize", handleResize);
   process.stdin.pause();
   term.setRawMode(false);
-  outro(pc.green("Done"));
+  outro(pc.green("Wrapper closed"));
 }
 
 main().catch((e) => {

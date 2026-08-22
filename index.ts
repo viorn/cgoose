@@ -226,30 +226,43 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
 
 
 
-// ─── Launch Goose ────────────────────────────────────────────────────────────
+// ─── Launch Goose via wrapper ────────────────────────────────────────────────
 
 function launchGoose(sessionName: string, provider: string, model: string, isNew: boolean): void {
   writeProjectMeta({ provider, model });
 
-  const args = ["session"];
-  if (!isNew) {
-    args.push("--resume", "--history");
+  const wrapperScript = join(import.meta.dir!, "wrapper.ts");
+
+  const wrapperArgs: string[] = [
+    "run", wrapperScript,
+    "--provider", provider,
+    "--model", model,
+  ];
+
+  // Determine if we need to resume or start fresh
+  if (isNew) {
+    wrapperArgs.push("--fresh");
+  } else {
+    wrapperArgs.push("--resume");
   }
+
   if (sessionName) {
-    args.push("--name", sessionName);
+    wrapperArgs.push("--session-name", sessionName);
   }
-  args.push("--provider", provider, "--model", model);
 
   console.log(
-    `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
+    `\n${pc.green("🚀")} ${pc.bold("Launching via cgoose wrapper...")}
   ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
   ${pc.dim("Provider:")} ${pc.yellow(provider)}
   ${pc.dim("Model:")}    ${pc.magenta(model)}
-  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}
+  ${pc.dim("Wrapper:")}  ${pc.dim(`bun ${wrapperArgs.join(" ")}`)}
   `,
   );
 
-  const child = spawn("goose", args, { stdio: "inherit", env: { ...process.env } });
+  const child = spawn("bun", wrapperArgs, {
+    stdio: "inherit",
+    env: { ...process.env },
+  });
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 
