@@ -228,42 +228,29 @@ async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
 
 // ─── Launch Goose via wrapper ────────────────────────────────────────────────
 
-function launchGoose(sessionName: string, provider: string, model: string, isNew: boolean): void {
+import { runWrapper, type WrapperArgs } from "./wrapper.ts";
+
+async function launchGoose(sessionName: string, provider: string, model: string, isNew: boolean): Promise<void> {
   writeProjectMeta({ provider, model });
 
-  const wrapperScript = join(import.meta.dir!, "wrapper.ts");
-
-  const wrapperArgs: string[] = [
-    "run", wrapperScript,
-    "--provider", provider,
-    "--model", model,
-  ];
-
-  // Determine if we need to resume or start fresh
-  if (isNew) {
-    wrapperArgs.push("--fresh");
-  } else {
-    wrapperArgs.push("--resume");
-  }
-
-  if (sessionName) {
-    wrapperArgs.push("--session-name", sessionName);
-  }
+  const args: WrapperArgs = {
+    provider,
+    model,
+    sessionName: sessionName || undefined,
+    resume: !isNew,
+    fork: false,
+    fresh: isNew,
+  };
 
   console.log(
     `\n${pc.green("🚀")} ${pc.bold("Launching via cgoose wrapper...")}
-  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
+  ${pc.dim("Session:")}  ${pc.cyan(sessionName || "(auto)")}
   ${pc.dim("Provider:")} ${pc.yellow(provider)}
   ${pc.dim("Model:")}    ${pc.magenta(model)}
-  ${pc.dim("Wrapper:")}  ${pc.dim(`bun ${wrapperArgs.join(" ")}`)}
   `,
   );
 
-  const child = spawn("bun", wrapperArgs, {
-    stdio: "inherit",
-    env: { ...process.env },
-  });
-  child.on("exit", (code) => process.exit(code ?? 0));
+  await runWrapper(args, { propagateExit: false });
 }
 
 
@@ -645,8 +632,13 @@ async function main() {
           continue;
         }
 
-        launchGoose(sessionName, selectedProviderName, modelValue, isNewSession);
-        return; // never reached — launchGoose replaces process
+        await launchGoose(sessionName, selectedProviderName, modelValue, isNewSession);
+        // After wrapper exits, return to session picker
+        console.log(pc.dim("\nPress any key to return to session picker..."));
+        await new Promise((resolve) => process.stdin.once("data", resolve));
+        console.clear();
+        step = "session";
+        continue;
       }
     }
   }

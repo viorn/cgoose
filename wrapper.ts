@@ -1,8 +1,12 @@
-#!/usr/bin/env bun
 /**
  * cgoose — TUI Wrapper for Goose CLI
  *
- * Usage: bun run wrapper.ts [options]
+ * Exports `runWrapper(args)` for programmatic use from index.ts.
+ * Also runs standalone via CLI if executed directly.
+ *
+ * Usage (CLI): bun run wrapper.ts --provider <name> --model <name> [options]
+ *
+ * Options:
  *   --provider <name>   Provider name (required)
  *   --model <name>      Model name (required)
  *   --session-id <id>   Resume existing session by ID
@@ -29,7 +33,7 @@ import { intro, outro, isCancel, log, select, confirm, text } from "@clack/promp
 import pc from "picocolors";
 
 // ─── CLI args ──────────────────────────────────────────────────────────────
-interface WrapperArgs {
+export interface WrapperArgs {
   provider: string;
   model: string;
   sessionId?: string;
@@ -157,6 +161,7 @@ let currentPtyWriter: any = null;
 let currentProvider = "";
 let currentModel = "";
 let wrapperRunning = true;
+let propagateExit = true; // if true, process.exit(code) on goose exit
 
 // ─── Launch Goose ───────────────────────────────────────────────────────────
 async function launchGoose(
@@ -194,7 +199,7 @@ async function launchGoose(
 
   const g = spawn(["goose", ...args], {
     pty: true,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["pipe", "inherit", "inherit"],
     env: { ...process.env },
     cwd: path.resolve("."),
   });
@@ -205,35 +210,7 @@ async function launchGoose(
   currentModel = model;
 }
 
-// ─── Pipe goose output to real terminal ────────────────────────────────────
-function pipeGooseOutput(g: any): void {
-  if (g.stdout) {
-    (async () => {
-      const reader = g.stdout.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (wrapperRunning && !g.killed) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          process.stdout.write(decoder.decode(value, { stream: true }));
-        }
-      } catch { /* terminated */ }
-    })();
-  }
-  if (g.stderr) {
-    (async () => {
-      const reader = g.stderr.getReader();
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          process.stderr.write(decoder.decode(value, { stream: true }));
-        }
-      } catch { /* terminated */ }
-    })();
-  }
-}
+
 
 // ─── Model change dialog ────────────────────────────────────────────────────
 async function modelDialog(
@@ -267,14 +244,12 @@ async function modelDialog(
   return { provider: sel, model: modelName };
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
-async function main() {
-  const cliArgs = parseArgs();
-
-  if (!cliArgs.provider || !cliArgs.model) {
-    console.error(pc.red("Usage: bun run wrapper.ts --provider <name> --model <name> [--session-id <id>] [--session-name <n>] [--resume] [--fork] [--fresh]"));
-    process.exit(1);
-  }
+// ─── Public API ──────────────────────────────────────────────────────────────
+export async function runWrapper(
+  cliArgs: WrapperArgs,
+  options?: { propagateExit?: boolean },
+): Promise<void> {
+  if (options?.propagateExit !== undefined) propagateExit = options.propagateExit;
 
   console.clear();
   intro(pc.bgCyan(pc.black(" cgoose-wrapper ")) + pc.dim(" — PTY wrapper"));
@@ -310,8 +285,7 @@ async function main() {
   term.setRawMode(true);
   process.stdin.resume();
 
-  // Pipe output
-  if (currentGoose) pipeGooseOutput(currentGoose);
+  
 
   // Resize handler
   function handleResize() {
@@ -363,7 +337,6 @@ async function main() {
         currentPtyWriter = null;
         await launchGoose(currentProvider, currentModel, null, null, { fork: true });
         writeProjectMeta({ provider: currentProvider, model: currentModel });
-        if (currentGoose) pipeGooseOutput(currentGoose);
         term.setRawMode(true);
       }, 0);
       return;
@@ -410,9 +383,23 @@ async function main() {
   process.stdin.pause();
   term.setRawMode(false);
   outro(pc.green("Wrapper closed"));
+
+  if (propagateExit) {
+    process.exit(0);
+  }
 }
 
-main().catch((e) => {
-  console.error(pc.red("Failed: " + e));
-  process.exit(1);
-});
+// ─── CLI entry point ─────────────────────────────────────────────────────────
+if (import.meta.main) {
+  (async () => {
+    const cliArgs = parseArgs();
+    if (!cliArgs.provider || !cliArgs.model) {
+      console.error(pc.red("Usage: bun run wrapper.ts --provider <name> --model <name> [--session-id <id>] [--session-name <n>] [--resume] [--fork] [--fresh]"));
+      process.exit(1);
+    }
+    await runWrapper(cliArgs);
+  })().catch((e) => {
+    console.error(pc.red("Failed: " + e));
+    process.exit(1);
+  });
+}
