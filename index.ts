@@ -9,6 +9,7 @@
  * - запоминает последний использованный провайдер/модель для проекта
  *   (в ~/.config/cgoose/projects/<dirname>-<hash>.json)
  * - Fetch моделей через OpenAI API (v1/models) для custom-провайдеров
+ * - 🦙 auto-детект локального Ollama (минуя конфиги Goose)
  * - запуск goose session [--name] --provider --model [--resume --history]
  */
 
@@ -225,6 +226,30 @@ function generateSessionName(prefix: string): string {
   return `${prefix}-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}`;
 }
 
+// ─── Ollama detection ────────────────────────────────────────────────────────
+
+const OLLAMA_HOST = "http://localhost:11434";
+
+interface OllamaTag {
+  name: string;
+  model: string;
+}
+
+/** Check if Ollama is running and return available model names, or null */
+async function detectOllama(): Promise<string[] | null> {
+  try {
+    const response = await fetch(`${OLLAMA_HOST}/api/tags`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return null;
+    const data: any = await response.json();
+    const models: string[] = (data.models || []).map((m: any) => m.name).sort();
+    return models.length > 0 ? models : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── OpenAI API model fetcher ────────────────────────────────────────────────
 
 async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
@@ -372,10 +397,13 @@ async function main() {
   const sessionPrefix = projectName;
   loadConfigEnvVars();
   const configProviders = getConfigProviders();
+  const ollamaModels = await detectOllama();
 
-  if (configProviders.length === 0) {
+  const hasAnyProvider = configProviders.length > 0 || (ollamaModels !== null && ollamaModels.length > 0);
+
+  if (!hasAnyProvider) {
     log.error(pc.red('\u2716 No enabled providers found in ' + CONFIG_PATH));
-    log.info(pc.dim("  Run 'goose configure' to set up a provider first."));
+    log.info(pc.dim("  Run 'goose configure' to set up a provider first, or install Ollama (ollama.com)."));
     process.exit(1);
   }
 
@@ -521,6 +549,23 @@ async function main() {
           }
         }
 
+        // Add local Ollama if running
+        if (ollamaModels && ollamaModels.length > 0) {
+          const isOllamaDefault = lastProviderRaw === "ollama";
+          const opt = {
+            label: isOllamaDefault
+              ? `🦙 Ollama (local) ${pc.dim("←")}`
+              : `🦙 Ollama (local)`,
+            value: "ollama",
+            hint: `${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""}`,
+          };
+          if (isOllamaDefault) {
+            providerOptions.unshift(opt);
+          } else {
+            providerOptions.push(opt);
+          }
+        }
+
         const selected = await autocomplete({
           message: `Provider: ${pc.dim("(Esc ← back to sessions)")}`,
           placeholder: "Type to filter providers...",
@@ -545,6 +590,38 @@ async function main() {
       // ─── STEP 4: Model selection ────────────────────────────────────────
       case "model": {
         if (!selectedProviderName) { step = "provider"; continue; }
+
+        // ── Ollama: show models directly from detection ──────────────────
+        if (selectedProviderName === "ollama") {
+          const lastMeta = isNewSession ? null : readProjectMeta();
+          const lastModel = lastMeta?.provider === "ollama" ? lastMeta.model : null;
+
+          const modelOptions = ollamaModels!.map((m) => ({
+            label: m === lastModel ? `${m} ${pc.dim("← last used")}` : m,
+            value: m,
+            hint: "",
+          }));
+
+          const selected = await autocomplete({
+            message: `Model for ${pc.cyan("🦙 Ollama (local)")}: ${pc.dim("(Esc ← back to provider)")}`,
+            placeholder: `Type to filter ${ollamaModels!.length} models...`,
+            options: modelOptions,
+            maxItems: 15,
+            filter: (search, opt) => {
+              if (!search) return true;
+              return opt.value.toLowerCase().includes(search.toLowerCase());
+            },
+          });
+
+          if (isCancel(selected)) {
+            step = "provider";
+            continue;
+          }
+
+          modelValue = selected as string;
+          step = "launch";
+          continue;
+        }
 
         const lastMeta = isNewSession ? null : readProjectMeta();
         const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
@@ -656,12 +733,17 @@ async function main() {
 
       // ─── STEP 5: Summary & Launch ───────────────────────────────────────
       case "launch": {
-        const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
+        const providerCfg: ProviderInfo = selectedProviderName === "ollama"
+          ? { name: "ollama", model: modelValue, engine: "ollama" }
+          : configProviders.find((p) => p.name === selectedProviderName)!;
         const displayName = sessionName || "(auto — from first message)";
+        const displayProvider = selectedProviderName === "ollama"
+          ? "🦙 Ollama (local)"
+          : selectedProviderName;
         outro(
           `${pc.green("✓")} Configuration complete:
   ${pc.bold("Session")}:  ${pc.cyan(displayName)}
-  ${pc.bold("Provider")}: ${pc.yellow(selectedProviderName)}
+  ${pc.bold("Provider")}: ${pc.yellow(displayProvider)}
   ${pc.bold("Model")}:    ${pc.magenta(modelValue)}`,
         );
 
