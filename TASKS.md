@@ -1,54 +1,182 @@
 # TUI Wrapper for Goose CLI
 
-## Контекст
+## Исследование исходного кода goose
 
-Сейчас cgoose — это pre-launch TUI: выбираешь сессию/провайдер/модель → запускается `goose session` с `stdio: inherit`, и всё управление переходит к goose. Мы теряем контроль.
+Дата: 2026-08-22
+Ветка: `feature/tui-wrapper`
+Исходники goose: `../goose`
 
-## Задача
+---
 
-Сделать **TUI-обёртку** (overlay/container) вокруг запущенного goose CLI, которая позволяет:
+## 1. Архитектура goose CLI
 
-1. **Горячие клавиши поверх goose** — перехватывать нажатия (например, `Ctrl+P` → показать панель с провайдерами/моделями) и выполнять действия, не убивая текущую сессию goose.
+### Goose CLI (`crates/goose-cli/src/cli.rs`)
+- **Rust** проект с `clap` для парсинга аргументов
+- Команда `session` → `handle_interactive_session()` → `build_session()` → `session.interactive()`
 
-2. **Смена модели на лету** — нажать хоткей → открыть диалог выбора модели → завершить текущую goose сессию и перезапустить её (`goose session --resume --history --provider X --model Y`). Goose поддерживает resume в ту же сессию с другой моделью.
+### REPL-цикл (`crates/goose-cli/src/session/mod.rs`)
+- Использует `rustyline` для ввода (не raw stdin! — **требует TTY**)
+- Главный цикл: `run_interactive()`:
+  ```
+  loop {
+      display_context_usage()
+      input = input::get_input(&mut editor)  // ← rustyline
+      handle_input(input)
+  }
+  ```
+- Ввод через `read_paste_aware_input()` который использует `rustyline::Editor`
 
-3. **Форк сессии** — хоткей → открыть диалог → запустить `goose session --edit --fork <session-id> --provider X --model Y`, форкнув текущую сессию в новую.
+### `goose term run` (headless mode)
+- Использует `headless(prompt)` — не требует TTY, но это **не интерактивный режим**
+- Одноразовый: берёт промпт, выполняет, завершается
 
-4. **Диалоговые TUI-окна** поверх goose-терминала — небольшие модальные окна (например, для выбора модели, просмотра списка сессий, подтверждения действий) без потери вывода goose.
+### `goose tui` 
+- Это просто `npx @aaif/goose@latest goose-tui` — отдельный Node.js TUI, запускается через `exec()`
 
-## Технические подходы к реализации
+---
 
-### Вариант A: tmux/screen-based wrapper
-- Запускаем goose в отдельной tmux-панели/окне
-- Отдельный процесс слушает хоткеи и управляет tmux
-- **Pro**: просто, не нужно трогать Goose
-- **Con**: зависимость от tmux, сложно сделать красивые диалоговые окна
+## 2. Ключевые флаги `goose session`
 
-### Вариант B: Псевдотерминал (PTY)
-- Используем Node.js PTY (через `node-pty` или `bun` pipe) для запуска goose
-- Управляем вводом/выводом, перехватываем клавиши перед отправкой goose
-- Рендерим свой TUI поверх (или рядом с) выводом goose
-- **Pro**: полный контроль, красивые оверлеи
-- **Con**: сложнее, нужно управлять терминалом
+| Флаг | Описание |
+|------|----------|
+| `-r, --resume` | Продолжить последнюю сессию (или по `--name`/`--session-id`) |
+| `--fork` | Копирует все сообщения из сессии в новую. Требует `--resume` |
+| `--edit` | Открывает $EDITOR для редактирования сообщений перед рестартом |
+| `--history` | Показать историю сообщений при resume |
+| `--provider <NAME>` | Переопределить провайдера |
+| `--model <MODEL>` | Переопределить модель |
+| `-n, --name <NAME>` | Имя сессии (для resume — найти по имени) |
+| `--session-id <ID>` | ID сессии (требует --resume) |
 
-### Вариант C: Гибрид (рекомендуемый старт)
-- Goose запускается в `spawn` с pipe'ами на stdin/stdout (вместо inherit)
-- В цикле читаем stdout goose и пишем в реальный stdout
-- Перед записью в stdin goose — проверяем, не хоткей ли это
-- Если хоткей — показываем overlay (временно приостанавливая вывод goose или рисуя поверх)
-- Для overlay используем что-то лёгкое (Clack уже в зависимостях, blessed/neo-blessed)
+### Комбинации:
+- `goose session --resume --provider X --model Y` — **смена модели при resume** (работает!)
+- `goose session --resume --fork` — создаёт копию сессии
+- `goose session --resume --fork --edit` — копирует и открывает в $EDITOR
 
-## Исследовательские вопросы
+---
 
-1. Как goose реагирует на stdin pipe vs TTY? Нужен ли PTY для корректной работы (цвета, prompt)?
-2. Поддерживает ли `goose session --resume --history --provider X --model Y` смену модели в существующей сессии?
-3. Как выглядит `goose session --edit --fork` — какие флаги принимает?
-4. Есть ли у goose сигналы (SIGINT/SIGTERM) graceful shutdown?
+## 3. Смена модели на лету (изнутри сессии)
 
-## План
+В REPL есть встроенная slash-команда **`/model`**:
 
-1. [ ] Исследовать поведение goose при pipe stdin/stdout — тестовый spawn
-2. [ ] Проверить флаги `--resume`, `--fork`, `--edit`
-3. [ ] Реализовать базовую обёртку: spawn → перехват клавиш → overlay
-4. [ ] Диалог смены модели на лету
-5. [ ] Диалог форка сессии
+```rust
+async fn handle_model(&mut self, options: input::ModelCommandOptions) -> Result<()> {
+    // Меняет провайдера/модель через self.agent.update_provider()
+    // БЕЗ перезапуска сессии!
+}
+```
+
+- `/model` — показать текущую модель
+- `/model gpt-4o` — сменить модель (тот же провайдер)
+- `/model --provider openai` — сменить провайдер (дефолтная модель)
+- `/model --provider openai gpt-4o` — сменить и провайдер, и модель
+
+**Ограничения:**
+- Не работает для APC-провайдеров (заканчиваются на `-acp`)
+- Не работает для провайдеров, управляющих своим контекстом (Claude Code и др.)
+
+---
+
+## 4. Форк сессии (из CLI, не из REPL)
+
+```rust
+// В handle_interactive_session():
+if fork {
+    let copied = session_manager.copy_session(id, original.name.clone()).await?;
+    session_id = Some(copied.id);
+    // Если edit — открывает $EDITOR для редактирования
+}
+```
+
+- `session_manager.copy_session()` из `crates/goose/src/session/session_manager.rs:520`
+- Копирует все сообщения в новую сессию
+- Возвращает новый `Session` с новым ID
+
+---
+
+## 5. Сигналы (`crates/goose-cli/src/signal.rs`)
+
+```rust
+pub fn shutdown_signal() -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    // Перехватывает SIGINT (Ctrl+C) и SIGTERM
+    // Использует tokio::signal
+}
+```
+
+Goose корректно обрабатывает Ctrl+C — двойное нажатие завершает сессию (через `HintStatus::MaybeExit` в `input.rs`).
+
+---
+
+## 6. Критическое открытие: TTY Required
+
+**Экспериментально подтверждено:**
+```
+$ echo "test" | timeout 5 goose session --resume --provider openai --model gpt-4o
+error: Failed to get user input: not connected
+```
+
+Goose interactive mode **требует TTY**. Это означает:
+- Простой `spawn` с pipe stdin/stdout **не сработает**
+- Нужен **PTY (псевдотерминал)** для запуска goose в обёртке
+
+---
+
+## 7. База данных сессий
+
+SQLite `~/.local/share/goose/sessions/sessions.db`:
+- `sessions` — сессии (id, name, working_dir, ...)
+- `messages` — сообщения
+- `usage_ledger` — использование токенов
+- `provider_inventory_entries`, `provider_inventory_models` — кэш провайдеров
+
+---
+
+## 8. Выводы для архитектуры обёртки
+
+### Вариант B (PTY) — единственный рабочий
+
+```mermaid
+flowchart TD
+    A[Пользователь] -->|ввод| B[TUI Wrapper - cgoose]
+    B -->|PTY stdin| C[goose session]
+    C -->|PTY stdout| B
+    B -->|дисплей| A
+    B -->|хоткей Ctrl+P| D[Модальное окно]
+    D -->|выбор модели| B
+    B -->|SIGTERM| C
+    B -->|restart --resume --provider X --model Y| C
+```
+
+### Ключевые решения:
+1. **Использовать `node-pty`** (или `@bun/pty` если Bun поддерживает) для создания PTY
+2. **Перехват ввода**: перед отправкой в PTY проверять, не хоткей ли это
+3. **Overlay-рендеринг**: временно приостанавливать поток PTY-вывода для показа диалогов
+4. **Смена модели**: 
+   - Быстрый путь: отправить `/model gpt-4o\n` прямо в PTY (используя встроенную команду goose)
+   - Альтернатива: убить goose и перезапустить с `--resume --provider X --model Y`
+5. **Форк**: убить goose → `goose session --resume --fork --provider X --model Y` → запуск
+
+### Практические команды для реализации:
+
+```bash
+# Смена модели через resume (перезапуск)
+goose session --resume --session-id <ID> --provider <PROVIDER> --model <MODEL>
+
+# Форк сессии
+goose session --resume --fork --provider <PROVIDER> --model <MODEL>
+
+# Получение списка сессий
+goose session list --format json
+```
+
+---
+
+## 9. Todo (обновлённый)
+
+1. [x] **Исследовать поведение goose при pipe stdin/stdout** — **TTY required!**
+2. [x] **Проверить флаги `--resume`, `--fork`, `--edit`** — все работают
+3. [x] **Проверить встроенную команду `/model`** — смена модели на лету есть
+4. [ ] Выбрать PTY-библиотеку для TypeScript/Bun
+5. [ ] Реализовать базовую обёртку: PTY spawn → перехват клавиш → overlay
+6. [ ] Диалог смены модели на лету
+7. [ ] Диалог форка сессии
