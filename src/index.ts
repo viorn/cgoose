@@ -2,6 +2,11 @@
 /**
  * cgoose — TUI for Goose AI Sessions
  *
+ * CLI flags:
+ *   -a    Auto-resume: quick resume to last session in this directory
+ *   -n    New session: skip pickers, start new with last provider/model
+ *   -s    Sessions only: picker only, then launch with last provider/model
+ *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
 
@@ -111,13 +116,56 @@ async function main() {
     process.exit(1);
   }
 
-  // State shared across steps
+  // ─── State shared across steps ───────────────────────────────────────────
   let step: Step = "session";
   let sessionName = "";
   let isNewSession = false;
   let selectedProviderName = "";
   let modelValue = "";
   let lastAllSessions: GooseSession[] = [];
+
+  // ─── CLI flags ───────────────────────────────────────────────────────────
+  const args = process.argv.slice(2);
+  const mode = args.includes("-a") ? "auto" : args.includes("-n") ? "new" : args.includes("-s") ? "session-only" : "full";
+
+  if (mode === "auto" || mode === "new" || mode === "session-only") {
+    const meta = readProjectMeta();
+    if (meta) {
+      selectedProviderName = meta.provider;
+      modelValue = meta.modelHistory[meta.provider]?.[0] ?? "";
+    }
+  }
+
+  if (mode === "auto") {
+    // Quick resume: find last session in this directory
+    if (!selectedProviderName) {
+      log.warn(pc.yellow("No previous session data for this project. Falling back to full workflow."));
+    } else {
+      const allSessions = getAllSessions();
+      const cwd = resolve(".");
+      const dirSessions = allSessions.filter((s) => s.working_dir === cwd);
+      const lastSession = dirSessions.sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      )[0];
+      if (lastSession) {
+        sessionName = lastSession.id;
+        isNewSession = false;
+        step = "launch";
+      } else {
+        log.warn(pc.yellow("No sessions found for this project. Falling back to full workflow."));
+      }
+    }
+  }
+
+  if (mode === "new") {
+    // Quick new: skip straight to launch
+    if (!selectedProviderName) {
+      log.warn(pc.yellow("No previous session data for this project. Falling back to full workflow."));
+    } else {
+      isNewSession = true;
+      step = "launch";
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Navigation loop — each Esc/cancel goes back one step
@@ -177,13 +225,21 @@ async function main() {
 
         if (selected === "__new__") {
           isNewSession = true;
-          step = "session_name";
+          if (mode === "session-only" && selectedProviderName) {
+            step = "session_name"; // still need a name, then skip to launch
+          } else {
+            step = "session_name";
+          }
           continue;
         }
 
         sessionName = selected as string;
         isNewSession = false;
-        step = "provider";
+        if (mode === "session-only" && selectedProviderName) {
+          step = "launch";
+        } else {
+          step = "provider";
+        }
         continue;
       }
 
@@ -207,7 +263,11 @@ async function main() {
         }
 
         sessionName = (customName as string).trim();
-        step = "provider";
+        if (mode === "session-only" && selectedProviderName) {
+          step = "launch";
+        } else {
+          step = "provider";
+        }
         continue;
       }
 
