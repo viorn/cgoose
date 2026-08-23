@@ -11,7 +11,7 @@ cgoose is a TUI wrapper around the `goose session` CLI. It does **not** replace 
 - cgoose lives in the user's project directory and remembers settings **per directory**
 - It reads `~/.config/goose/config.yaml` for enabled providers
 - It reads `~/.config/goose/custom_providers/*.json` for custom provider definitions
-- Secrets come from: env vars → GNOME Keyring → `~/.config/goose/secrets.yaml` → JSON config files
+- Secrets come from: env vars → system keyring (libsecret) → `~/.config/goose/secrets.yaml` → JSON config files
 - When the user selects a model via "Fetch from API", cgoose may ask to save it to the provider's JSON file
 
 ## Installation

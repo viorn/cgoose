@@ -66,7 +66,7 @@ function parseYamlProviders(raw: string): ProviderInfo[] {
  * Read Goose secrets from all possible storage backends.
  *
  * Goose supports two secret storage modes:
- * 1. **System Keyring** (default) — secrets stored in GNOME Keyring as JSON
+ * 1. **System Keyring** (default) — secrets stored in OS keychain via libsecret as JSON
  * 2. **File-based Storage** — secrets stored in ~/.config/goose/secrets.yaml
  *    (used when GOOSE_DISABLE_KEYRING=true, or `system-keyring` feature is disabled)
  *
@@ -80,7 +80,7 @@ function readGooseSecrets(): Record<string, string> {
   gooseSecretsCache = {};
   const secretsPath = join(homedir(), ".config", "goose", "secrets.yaml");
 
-  // 1) Try system keyring (GNOME Keyring / libsecret)
+  // 1) Try system keyring via libsecret (GNOME Keyring, KDE Wallet, KeePassXC, etc.)
   try {
     const output = execSync("secret-tool search --all service goose", {
       encoding: "utf-8",

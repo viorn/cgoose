@@ -81,7 +81,7 @@ bun start
 
 ### Secrets & Auth
 - Reads API keys from all Goose storage backends:
-  - **System keyring** (GNOME Keyring / libsecret)
+  - **System keyring** (libsecret — works with GNOME Keyring, KDE Wallet, KeePassXC, etc.)
   - **File-based** (`~/.config/goose/secrets.yaml`)
   - Environment variables
 - If a key is missing, cgoose shows a clear hint about which variable to set
@@ -112,7 +112,7 @@ Pressing **Esc** at any step goes back one step (not abort).
 |------|-------|
 | Provider config | `~/.config/goose/config.yaml` |
 | Custom provider defs | `~/.config/goose/custom_providers/*.json` |
-| Secrets (keyring) | GNOME Keyring (service: `secrets@goose:default`) |
+| Secrets (keyring) | System keyring via libsecret (service: `secrets@goose:default`) |
 | Secrets (file) | `~/.config/goose/secrets.yaml` |
 | Per-project history | `~/.config/cgoose/projects/<dir>-<hash>.json` |
 | Session DB | `~/.local/share/goose/sessions/sessions.db` |
