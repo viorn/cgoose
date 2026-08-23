@@ -8,13 +8,9 @@
 
 ---
 
-## Screenshots
+## Demo
 
-| Session list | New session |
-|:--:|:--:|
-| ![sessions](sessions.jpg) | ![new session](new-session.jpg) |
-| Provider selection | Model selection |
-| ![providers](providers.jpg) | ![models](models.jpg) |
+![cgoose workflow](flow.gif)
 
 ---
 
@@ -77,10 +73,15 @@ bun start
 ### Model Selection
 - **Last used model** shown as default (`✦`)
 - **Model history** per provider — previously used models at your fingertips
-- **Fetch from API** — hits `GET /v1/models` on OpenAI-compatible endpoints
+- **Fetch from API** — hits `GET /v1/models` on OpenAI-compatible endpoints, parses `context_limit`/`max_context`/`context_window` if available
 - **Ollama models** — lists with tool support badges, warns if model lacks tool calling
 - **Manual input** fallback with validation
-- Discovered models can be **saved to the provider's JSON config** on the spot
+
+### Context Limit
+- When discovery or manual input finds a model not yet in the provider's JSON config, cgoose prompts you for a **context limit** (in tokens)
+- If the API returned context info (KodikRouter, llama.cpp, etc.), it's pre-filled as the default
+- Otherwise defaults to `128000` (Goose's built-in default)
+- **On launch**, cgoose sets `GOOSE_CONTEXT_LIMIT` so Goose actually uses the value instead of falling back to its canonical registry or `DEFAULT_CONTEXT_LIMIT`
 
 ### Secrets & Auth
 - Reads API keys from all Goose storage backends:
@@ -92,6 +93,7 @@ bun start
 ### Launch
 - Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
+- Sets `GOOSE_CONTEXT_LIMIT` from the provider's JSON model config
 - Resumes existing sessions with `--resume --history`
 - Spawns `goose session` with `stdio: inherit`, forwards exit code
 
@@ -103,7 +105,8 @@ bun start
 2. **Name the session** — enter a custom name or leave empty for auto-name from first message
 3. **Pick a provider** — sorted by your history, shows Ollama if running locally
 4. **Pick a model** — last used, history, fetch from API, or type manually
-5. **Launch** — summary screen → `goose session` starts in the same terminal
+5. **Context limit** (if new model for custom provider) — enter tokens or accept default
+6. **Launch** — summary screen → `goose session` starts in the same terminal
 
 Pressing **Esc** at any step goes back one step (not abort).
 
