@@ -2,6 +2,8 @@
 
 This file describes what cgoose is and how agents (Goose) should interact with it.
 
+> **⚠ Tested only on Linux.** May work on macOS (secret-tool not available, file-based secrets should work). Windows is not supported.
+
 ## Overview
 
 cgoose is a TUI wrapper around the `goose session` CLI. It does **not** replace Goose — it launches it. Think of it as a session launcher with history and discovery.
