@@ -34,17 +34,42 @@ async function handleDeleteSessions(
   _allSessions: GooseSession[],
   dirSessions: GooseSession[],
 ): Promise<boolean> {
+  // Count empty sessions
+  const emptySessions = dirSessions.filter((s) => s.message_count === 0);
+
   // 1) Choose mode
   const mode = await select({
     message: "Delete sessions:",
     options: [
       { value: "select", label: "Select individually" },
+      { value: "empty", label: "Clean empty sessions", hint: "(" + emptySessions.length + " sessions)" },
       { value: "all", label: "Clean all sessions in this directory", hint: "(" + dirSessions.length + " sessions)" },
       { value: "back", label: "\u2190 Go back" },
     ],
   });
 
   if (isCancel(mode) || mode === "back") return false;
+
+  if (mode === "empty") {
+    if (emptySessions.length === 0) {
+      log.info(pc.dim("No empty sessions in this directory."));
+      return false;
+    }
+    const confirmed = await confirm({
+      message: "Delete " + emptySessions.length + " empty sessions in " + pc.cyan(resolve(".")) + "?",
+      initialValue: false,
+    });
+    if (isCancel(confirmed) || !confirmed) return false;
+
+    const s = spinner();
+    s.start("Deleting " + emptySessions.length + " empty sessions...");
+    let ok = 0, fail = 0;
+    for (const session of emptySessions) {
+      if (deleteSessionById(session.id)) ok++; else fail++;
+    }
+    s.stop("Done: " + ok + " deleted, " + fail + " failed");
+    return true;
+  }
 
   if (mode === "all") {
     if (dirSessions.length === 0) {
