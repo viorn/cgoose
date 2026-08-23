@@ -520,6 +520,7 @@ async function main() {
         }
 
         if (modelChoice === "__api_fetch__") {
+          let selectedApiContextLimit: number | undefined;
           try {
             const apiModels = await fetchModelsFromApi(providerCfg);
 
@@ -533,7 +534,6 @@ async function main() {
               if (isCancel(typed)) { step = "model"; continue; }
               modelValue = (typed as string).trim() || defaultModel;
             } else {
-              let selectedApiContextLimit: number | undefined;
               const apiModelChoice = await autocomplete({
                 message: `Select model from ${pc.cyan(providerCfg.baseUrl!)}: ${pc.dim("(Esc ← back)")}`,
                 placeholder: `Type to filter ${apiModels.length} models...`,
