@@ -16,9 +16,9 @@ export function launchGoose(
 ): void {
   writeProjectMeta(providerInfo.name, model);
 
-  // For custom providers (with engine), use the engine as --provider value
+  // Use the provider name as --provider value (engine is just for API compat)
   // and set appropriate env vars for base URL and auth
-  const effectiveProvider = providerInfo.engine || providerInfo.name;
+  const effectiveProvider = providerInfo.name;
   const launchEnv: Record<string, string> = { ...process.env as Record<string, string> };
 
   if (providerInfo.engine && providerInfo.baseUrl) {

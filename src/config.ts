@@ -2,7 +2,8 @@
  * Provider configuration — parse YAML, enrich from custom_providers, load env vars
  */
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import process from "node:process";
@@ -20,6 +21,7 @@ export interface ProviderInfo {
   engine?: string;
   baseUrl?: string;
   authToken?: string;
+  apiKeyEnv?: string; // name of the env var that holds the API key (from custom_providers JSON)
 }
 
 // ─── Config parsing ──────────────────────────────────────────────────────────
@@ -60,6 +62,75 @@ function parseYamlProviders(raw: string): ProviderInfo[] {
   return providers;
 }
 
+/**
+ * Read Goose secrets from all possible storage backends.
+ *
+ * Goose supports two secret storage modes:
+ * 1. **System Keyring** (default) — secrets stored in GNOME Keyring as JSON
+ * 2. **File-based Storage** — secrets stored in ~/.config/goose/secrets.yaml
+ *    (used when GOOSE_DISABLE_KEYRING=true, or `system-keyring` feature is disabled)
+ *
+ * Returns a map of env var name → secret value.
+ * The map is cached after the first read.
+ */
+let gooseSecretsCache: Record<string, string> | null = null;
+
+function readGooseSecrets(): Record<string, string> {
+  if (gooseSecretsCache !== null) return gooseSecretsCache;
+  gooseSecretsCache = {};
+  const secretsPath = join(homedir(), ".config", "goose", "secrets.yaml");
+
+  // 1) Try system keyring (GNOME Keyring / libsecret)
+  try {
+    const output = execSync("secret-tool search --all service goose", {
+      encoding: "utf-8",
+      timeout: 2_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const match = output.match(/secret\s*=\s*(\{.*\})/s);
+    if (match) {
+      const parsed = JSON.parse(match[1]);
+      let found = false;
+      for (const [key, val] of Object.entries(parsed)) {
+        if (typeof val === "string" && val.length > 0) {
+          gooseSecretsCache[key] = val;
+          found = true;
+        }
+      }
+      if (found) return gooseSecretsCache; // keyring has data — authoritative
+    }
+  } catch {
+    // secret-tool not available or no secrets stored
+  }
+
+  // 2) Try file-based storage (~/.config/goose/secrets.yaml)
+  try {
+    if (existsSync(secretsPath)) {
+      const raw = readFileSync(secretsPath, "utf-8");
+      // secrets.yaml contains YAML key: value pairs
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const colonIdx = trimmed.indexOf(":");
+        if (colonIdx === -1) continue;
+        const key = trimmed.slice(0, colonIdx).trim();
+        let val = trimmed.slice(colonIdx + 1).trim();
+        // Strip surrounding quotes
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (key && val) {
+          gooseSecretsCache[key] = val;
+        }
+      }
+    }
+  } catch {
+    // corrupt or unreadable file
+  }
+
+  return gooseSecretsCache;
+}
+
 /** Enrich providers with engine/base_url/auth from custom_providers JSON files */
 function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
   if (!existsSync(CUSTOM_PROVIDERS_DIR)) return providers;
@@ -73,7 +144,8 @@ function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
       const secretKey = data.secrets?.api_key || data.secrets?.API_KEY || "";
       p.engine = data.engine || "openai";
       p.baseUrl = data.base_url || "";
-      p.authToken = authHeader.replace(/^Bearer\s+/i, "") || (envKey ? process.env[envKey] || "" : "") || secretKey;
+      p.authToken = authHeader.replace(/^Bearer\s+/i, "") || (envKey ? process.env[envKey] || readGooseSecrets()[envKey] || "" : "") || secretKey;
+      if (envKey) p.apiKeyEnv = envKey;
     } catch { /* skip corrupt files */ }
   }
   return providers;
@@ -81,7 +153,72 @@ function enrichProviders(providers: ProviderInfo[]): ProviderInfo[] {
 
 export function getConfigProviders(): ProviderInfo[] {
   if (!existsSync(CONFIG_PATH)) return [];
-  return enrichProviders(parseYamlProviders(readFileSync(CONFIG_PATH, "utf-8")));
+
+  // Read names of all custom provider JSON files
+  const customNames = new Set<string>();
+  if (existsSync(CUSTOM_PROVIDERS_DIR)) {
+    for (const file of readdirSync(CUSTOM_PROVIDERS_DIR).filter((f) => f.endsWith(".json"))) {
+      try {
+        const data = JSON.parse(readFileSync(join(CUSTOM_PROVIDERS_DIR, file), "utf-8"));
+        if (data.name) customNames.add(data.name);
+      } catch { /* skip corrupt files */ }
+    }
+  }
+
+  const providers = enrichProviders(parseYamlProviders(readFileSync(CONFIG_PATH, "utf-8")));
+
+  // Only keep providers that:
+  // - are built-in (not starting with "custom_"), OR
+  // - have a corresponding JSON file in custom_providers/
+  return providers.filter((p) => {
+    if (!p.name.startsWith("custom_")) return true; // built-in (e.g. "local")
+    return customNames.has(p.name); // custom → needs JSON file
+  });
+}
+
+/**
+ * Check if a model is already in the custom provider's JSON file models list.
+ */
+export function isModelInCustomProviderJson(providerName: string, modelName: string): boolean {
+  const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
+  if (!existsSync(filePath)) return false;
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf-8"));
+    if (!Array.isArray(data.models)) return false;
+    return data.models.some((m: any) => {
+      if (typeof m === "string") return m === modelName;
+      return m?.name === modelName;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Add a model to the custom provider's JSON file models list (if not already present).
+ * Returns true if added, false if already present or on error.
+ */
+export function addModelToCustomProviderJson(providerName: string, modelName: string): boolean {
+  const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
+  if (!existsSync(filePath)) return false;
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf-8"));
+    if (!Array.isArray(data.models)) {
+      data.models = [];
+    }
+    // Check if already present (by name for objects, directly for strings)
+    const already = data.models.some((m: any) => {
+      if (typeof m === "string") return m === modelName;
+      return m?.name === modelName;
+    });
+    if (already) return false;
+
+    data.models.push({ name: modelName });
+    writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Set top-level env vars from config.yaml on process.env so child processes inherit them */

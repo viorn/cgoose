@@ -13,7 +13,7 @@ import {
 import pc from "picocolors";
 
 import { getCurrentDirName, generateSessionName } from "./utils";
-import { getConfigProviders, loadConfigEnvVars, type ProviderInfo } from "./config";
+import { getConfigProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, type ProviderInfo } from "./config";
 import { readProjectMeta } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo } from "./models";
@@ -364,6 +364,7 @@ async function main() {
           : providerCfg?.model ?? "";
 
         const supportsApiFetch = providerCfg?.engine === "openai" && !!providerCfg?.baseUrl;
+        const missingAuth = !providerCfg?.authToken && providerCfg?.apiKeyEnv;
 
         const modelOptions: { label: string; value: string; hint?: string }[] = [];
 
@@ -394,9 +395,11 @@ async function main() {
 
         if (supportsApiFetch) {
           modelOptions.push({
-            label: pc.cyan("🔄 Fetch from API"),
+            label: missingAuth ? pc.red("🔄 Fetch from API ⚠️") : pc.cyan("🔄 Fetch from API"),
             value: "__api_fetch__",
-            hint: providerCfg.baseUrl,
+            hint: missingAuth
+              ? pc.yellow(`Set $${providerCfg.apiKeyEnv} first`)
+              : providerCfg.baseUrl,
           });
         }
 
@@ -457,6 +460,21 @@ async function main() {
             });
             if (isCancel(typed)) { step = "model"; continue; }
             modelValue = (typed as string).trim() || defaultModel;
+          }
+
+          // If model is not in provider's JSON file, offer to add it
+          if (!isModelInCustomProviderJson(selectedProviderName, modelValue)) {
+            const addToJson = await confirm({
+              message: `Add "${modelValue}" to "${selectedProviderName}" provider's model list?`,
+              initialValue: true,
+            });
+            if (!isCancel(addToJson) && addToJson) {
+              if (addModelToCustomProviderJson(selectedProviderName, modelValue)) {
+                log.success(pc.green(`✓ Added "${modelValue}" to ${selectedProviderName} provider config`));
+              } else {
+                log.warn(pc.yellow(`⚠ Could not update provider config`));
+              }
+            }
           }
         } else if (modelChoice === "__manual__") {
           const typed = await text({
