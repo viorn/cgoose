@@ -3,8 +3,8 @@
 # install.sh — Install cgoose locally (requires bun)
 #
 # Installs cgoose for the current user:
-#   ~/.local/share/cgoose/   — source code + dependencies
-#   ~/.local/bin/cgoose      — launcher script (runs via bun)
+#   ~/.local/lib/cgoose/      — source code + dependencies
+#   ~/.local/bin/cgoose       — launcher script (runs via bun)
 #
 # Make sure ~/.local/bin is in your PATH:
 #   export PATH="$HOME/.local/bin:$PATH"
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_DIR="${HOME}/.local/share/cgoose"
+INSTALL_DIR="${HOME}/.local/lib/cgoose"
 BIN_DIR="${HOME}/.local/bin"
 LAUNCHER="${BIN_DIR}/cgoose"
 
