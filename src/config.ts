@@ -223,6 +223,30 @@ export function addModelToCustomProviderJson(providerName: string, modelName: st
 }
 
 /**
+ * Read all models from a custom provider's JSON file.
+ * Returns empty array if the file doesn't exist or has no models.
+ */
+export interface CustomProviderModel {
+  name: string;
+  contextLimit?: number;
+}
+
+export function getCustomProviderModels(providerName: string): CustomProviderModel[] {
+  const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
+  if (!existsSync(filePath)) return [];
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf-8"));
+    if (!Array.isArray(data.models)) return [];
+    return data.models.map((m: any) => {
+      if (typeof m === "string") return { name: m, contextLimit: undefined };
+      return { name: m.name, contextLimit: m.context_limit ?? undefined };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Read context_limit for a model from a custom provider's JSON file.
  * Returns undefined if the model/limit is not configured.
  */

@@ -18,7 +18,7 @@ import {
 import pc from "picocolors";
 
 import { getCurrentDirName, generateSessionName } from "./utils";
-import { getConfigProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, type ProviderInfo } from "./config";
+import { getConfigProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { readProjectMeta } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
@@ -454,10 +454,11 @@ async function main() {
         const modelOptions: { label: string; value: string; hint?: string }[] = [];
 
         if (defaultModel) {
+          const isConfigured = selectedProviderName.startsWith("custom_") && isModelInCustomProviderJson(selectedProviderName, defaultModel);
           modelOptions.push({
             label: pc.green(`✦ ${defaultModel}`),
             value: defaultModel,
-            hint: pc.dim("last used"),
+            hint: isConfigured ? pc.dim("configured") : undefined,
           });
         }
 
@@ -470,6 +471,20 @@ async function main() {
             value: m,
             hint: pc.dim("history"),
           });
+        }
+
+        // Add models from custom provider JSON (if any) — skip if already shown above
+        if (selectedProviderName.startsWith("custom_")) {
+          const customModels = getCustomProviderModels(selectedProviderName);
+          for (const cm of customModels) {
+            if (cm.name !== defaultModel && !historyModels.includes(cm.name)) {
+              modelOptions.push({
+                label: cm.name,
+                value: cm.name,
+                hint: pc.dim("configured"),
+              });
+            }
+          }
         }
 
         modelOptions.push({
