@@ -2,3 +2,4 @@ node_modules/
 bun.lock
 .goose-tui.json
 cgoose
+cgoose-*-linux-*
