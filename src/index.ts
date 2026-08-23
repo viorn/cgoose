@@ -18,7 +18,8 @@ import {
 import pc from "picocolors";
 
 import { getCurrentDirName, generateSessionName } from "./utils";
-import { getConfigProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
+import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
+import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
 import { readProjectMeta } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
@@ -130,10 +131,14 @@ async function main() {
   const projectName = getCurrentDirName();
   const sessionPrefix = projectName;
   loadConfigEnvVars();
-  const configProviders = getConfigProviders();
+  let configProviders = getConfigProviders();
+  // Discover custom providers that have JSON files but aren't in config.yaml
+  let discoveredProviders = getDiscoveredCustomProviders(configProviders);
+  // All known providers = from config.yaml/enriched + discovered from JSON only
+  let allProviders = [...configProviders, ...discoveredProviders];
   const ollamaModels = await detectOllama();
 
-  const hasAnyProvider = configProviders.length > 0 || (ollamaModels !== null && ollamaModels.length > 0);
+  const hasAnyProvider = allProviders.length > 0 || (ollamaModels !== null && ollamaModels.length > 0);
 
   if (!hasAnyProvider) {
     log.error(pc.red('\u2716 No enabled providers found in ' + resolve('.config/goose/config.yaml')));
@@ -306,8 +311,15 @@ async function main() {
         const providerHistory = lastMeta?.providerHistory ?? [];
         const providerOptions: { label: string; value: string; hint?: string }[] = [];
 
-        // Sort config providers: history first (most recent → oldest), then alphabetical
-        const sortedProviders = [...configProviders].sort((a, b) => {
+        // ── "Add custom provider..." option always at top ─────────────────
+        providerOptions.push({
+          label: pc.cyan("🆕 Add custom provider..."),
+          value: "__add_provider__",
+          hint: pc.dim("OpenAI/Anthropic/Ollama compatible"),
+        });
+
+        // Sort all providers (config + discovered): history first, then alphabetical
+        const sortedProviders = [...allProviders].sort((a, b) => {
           const aIdx = providerHistory.indexOf(a.name);
           const bIdx = providerHistory.indexOf(b.name);
           if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
@@ -322,6 +334,12 @@ async function main() {
           let hint = defaultModel;
           let label = p.name;
           let extra = "";
+
+          // Mark discovered providers (those without a YAML entry)
+          const isDiscovered = discoveredProviders.some((d) => d.name === p.name);
+          if (isDiscovered) {
+            label = `${p.name} ${pc.dim("(discovered)")}`;
+          }
 
           if (p.name === lastProviderRaw) {
             extra = ` ${pc.dim("(last used)")}`;
@@ -379,6 +397,25 @@ async function main() {
 
         if (isCancel(selected)) {
           step = "session"; // back to session list
+          continue;
+        }
+
+        // ── Handle "Add custom provider..." ───────────────────────────────
+        if (selected === "__add_provider__") {
+          const created: CreatedProvider | null = await createCustomProviderWizard();
+          if (created) {
+            // Re-read providers so the new one shows up immediately
+            configProviders = getConfigProviders();
+            discoveredProviders = getDiscoveredCustomProviders(configProviders);
+            allProviders = [...configProviders, ...discoveredProviders];
+
+            // Auto-select the newly created provider
+            selectedProviderName = created.id;
+            modelValue = "";
+            // Models are chosen on the next step
+            step = "model";
+          }
+          // If cancelled, go back to provider list
           continue;
         }
 
@@ -443,7 +480,7 @@ async function main() {
         }
 
         const lastMeta = readProjectMeta();
-        const providerCfg = configProviders.find((p) => p.name === selectedProviderName)!;
+        const providerCfg = allProviders.find((p) => p.name === selectedProviderName)!;
         const defaultModel = lastMeta?.provider === selectedProviderName
           ? (lastMeta.modelHistory[selectedProviderName]?.[0] ?? "")
           : providerCfg?.model ?? "";
@@ -641,7 +678,7 @@ async function main() {
       case "launch": {
         const providerCfg: ProviderInfo = selectedProviderName === "ollama"
           ? { name: "ollama", model: modelValue, engine: "ollama" }
-          : configProviders.find((p) => p.name === selectedProviderName)!;
+          : allProviders.find((p) => p.name === selectedProviderName)!;
         const displayName = sessionName || "(auto — from first message)";
         const displayProvider = selectedProviderName === "ollama"
           ? "🦙 Ollama (local)"

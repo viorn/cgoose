@@ -177,8 +177,51 @@ export function getConfigProviders(): ProviderInfo[] {
 }
 
 /**
- * Check if a model is already in the custom provider's JSON file models list.
+ * Discover custom providers from JSON files that aren't referenced in config.yaml.
+ * These are providers created via `goose configure` or via cgoose's own creator.
+ * Returns ProviderInfo entries suitable for listing in the provider picker.
  */
+export function getDiscoveredCustomProviders(yamlProviders: ProviderInfo[]): ProviderInfo[] {
+  const discovered: ProviderInfo[] = [];
+  if (!existsSync(CUSTOM_PROVIDERS_DIR)) return discovered;
+
+  const yamlNames = new Set(yamlProviders.map((p) => p.name));
+
+  for (const file of readdirSync(CUSTOM_PROVIDERS_DIR).filter((f) => f.endsWith(".json"))) {
+    try {
+      const data = JSON.parse(readFileSync(join(CUSTOM_PROVIDERS_DIR, file), "utf-8"));
+      const name: string = data.name;
+      if (!name) continue;
+      // Skip if already in config.yaml enriched providers (they'll show up normally)
+      if (yamlNames.has(name)) continue;
+
+      // Extract auth info
+      const authHeader = data.headers?.Authorization || data.headers?.authorization || "";
+      const envKey = data.api_key_env || "";
+      const secretKey = data.secrets?.api_key || data.secrets?.API_KEY || "";
+      const authToken = authHeader.replace(/^Bearer\s+/i, "")
+        || (envKey ? process.env[envKey] || readGooseSecrets()[envKey] || "" : "")
+        || secretKey;
+
+      // Pick first model as default, or empty string
+      const firstModel = Array.isArray(data.models) && data.models.length > 0
+        ? (typeof data.models[0] === "string" ? data.models[0] : data.models[0]?.name ?? "")
+        : "";
+
+      discovered.push({
+        name,
+        model: firstModel,
+        engine: typeof data.engine === "string" ? data.engine : "openai",
+        baseUrl: data.base_url || "",
+        authToken,
+        apiKeyEnv: envKey || undefined,
+      });
+    } catch {
+      /* skip corrupt files */
+    }
+  }
+  return discovered;
+}
 export function isModelInCustomProviderJson(providerName: string, modelName: string): boolean {
   const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
   if (!existsSync(filePath)) return false;
