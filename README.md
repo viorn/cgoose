@@ -8,10 +8,11 @@
 
 ## Screenshots
 
-| Session selection | Provider & model picker |
+| Session list | New session |
 |:--:|:--:|
-| ![Session list](Screenshot_20260822_143906_Termux.jpg) | ![Provider picker](Screenshot_20260822_143916_Termux.jpg) |
-| ![Model selection](Screenshot_20260822_143929_Termux.jpg) | ![Launch summary](Screenshot_20260822_143936_Termux.jpg) |
+| ![sessions](sessions.jpg) | ![new session](new-session.jpg) |
+| Provider selection | Model selection |
+| ![providers](providers.jpg) | ![models](models.jpg) |
 
 ---
 
