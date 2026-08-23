@@ -124,18 +124,20 @@ Pressing **Esc** at any step goes back one step (not abort).
 
 ## CLI Flags
 
-| Flag | Mode | What it does |
-|------|------|-------------|
-| `-a` | **Auto-resume** | Jump straight to launch with the last session, provider, and model for this project |
-| `-n` | **New session** | Skip pickers, start a new session with the last provider and model |
-| `-s` | **Sessions only** | Show only the session picker — skip provider and model selection, use last used |
+Run cgoose with a single-letter mode (like tmux):
+
+| Mode | What it does |
+|------|-------------|
+| `a` | **Auto-resume** — jump straight to launch with the last session, provider, and model for this project |
+| `n` | **New session** — skip pickers, start a new session with the last provider and model |
+| `s` | **Sessions only** — show only the session picker, skip provider and model selection, use last used |
 
 If there's no project history for the current directory, the flag is ignored and the full workflow runs.
 
 ```bash
-cgoose -a    # resume last session
-cgoose -n    # new session with last provider/model
-cgoose -s    # pick a session, then launch
+cgoose a    # resume last session
+cgoose n    # new session with last provider/model
+cgoose s    # pick a session, then launch
 ```
 
 ## Scripts

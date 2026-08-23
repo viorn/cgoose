@@ -2,10 +2,10 @@
 /**
  * cgoose — TUI for Goose AI Sessions
  *
- * CLI flags:
- *   -a    Auto-resume: quick resume to last session in this directory
- *   -n    New session: skip pickers, start new with last provider/model
- *   -s    Sessions only: picker only, then launch with last provider/model
+ * CLI flags (single-letter, like tmux):
+ *   a    Auto-resume: quick resume to last session in this directory
+ *   n    New session: skip pickers, start new with last provider/model
+ *   s    Sessions only: picker only, then launch with last provider/model
  *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
@@ -126,7 +126,7 @@ async function main() {
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
   const args = process.argv.slice(2);
-  const mode = args.includes("-a") ? "auto" : args.includes("-n") ? "new" : args.includes("-s") ? "session-only" : "full";
+  const mode = args.includes("a") ? "auto" : args.includes("n") ? "new" : args.includes("s") ? "session-only" : "full";
 
   if (mode === "auto" || mode === "new" || mode === "session-only") {
     const meta = readProjectMeta();
