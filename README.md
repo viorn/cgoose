@@ -54,7 +54,7 @@ bash install.sh
 cgoose
 ```
 
-Installs source + deps to `~/.local/share/cgoose/` and a launcher to `~/.local/bin/cgoose`. Make sure `~/.local/bin` is in your `PATH`.
+Installs source + deps to `~/.local/lib/cgoose/` and a launcher to `~/.local/bin/cgoose`. Make sure `~/.local/bin` is in your `PATH`.
 
 ### Option 3: Run from source (requires Bun)
 
@@ -158,7 +158,7 @@ cgoose s    # pick a session, then launch
 | Script | What it does |
 |--------|-------------|
 | `build.sh` | Compiles a standalone binary (`./cgoose`) with Bun runtime embedded |
-| `install.sh` | Installs source to `~/.local/share/cgoose/` + launcher to `~/.local/bin/cgoose` |
+| `install.sh` | Installs source to `~/.local/lib/cgoose/` + launcher to `~/.local/bin/cgoose` |
 
 ---
 
