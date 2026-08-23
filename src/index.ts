@@ -21,7 +21,7 @@ import { getCurrentDirName, generateSessionName } from "./utils";
 import { getConfigProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, type ProviderInfo } from "./config";
 import { readProjectMeta } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
-import { detectOllama, fetchModelsFromApi, type OllamaModelInfo } from "./models";
+import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 import { launchGoose } from "./launcher";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -493,13 +493,14 @@ async function main() {
               if (isCancel(typed)) { step = "model"; continue; }
               modelValue = (typed as string).trim() || defaultModel;
             } else {
+              let selectedApiContextLimit: number | undefined;
               const apiModelChoice = await autocomplete({
                 message: `Select model from ${pc.cyan(providerCfg.baseUrl!)}: ${pc.dim("(Esc ← back)")}`,
                 placeholder: `Type to filter ${apiModels.length} models...`,
                 options: apiModels.map((m) => ({
-                  label: m,
-                  value: m,
-                  hint: "",
+                  label: m.id,
+                  value: m.id,
+                  hint: m.contextLimit ? pc.dim(`context: ${m.contextLimit.toLocaleString("ru-RU")}`) : pc.dim("context: 128k default"),
                 })),
                 maxItems: 15,
                 filter: (search, opt) => {
@@ -510,6 +511,7 @@ async function main() {
 
               if (isCancel(apiModelChoice)) { step = "model"; continue; }
               modelValue = apiModelChoice as string;
+              selectedApiContextLimit = apiModels.find((m) => m.id === modelValue)?.contextLimit;
             }
           } catch (err) {
             log.error(pc.red(`Failed to fetch models: ${err}`));
@@ -529,8 +531,22 @@ async function main() {
               initialValue: true,
             });
             if (!isCancel(addToJson) && addToJson) {
-              if (addModelToCustomProviderJson(selectedProviderName, modelValue)) {
-                log.success(pc.green(`✓ Added "${modelValue}" to ${selectedProviderName} provider config`));
+              const apiCtxLimit = selectedApiContextLimit;
+              const suggestedLimit = (apiCtxLimit ?? 128000).toLocaleString("ru-RU");
+              const ctxInput = await text({
+                message: `Context limit for "${modelValue}" (tokens): ${pc.dim(`(Enter for ${suggestedLimit})`)}`,
+                placeholder: suggestedLimit,
+                defaultValue: String(apiCtxLimit ?? 128000),
+                validate: (val) => {
+                  if (val && val.trim() && isNaN(Number(val.trim()))) return "Must be a number";
+                  return;
+                },
+              });
+              const contextLimit = !isCancel(ctxInput) && (ctxInput as string).trim()
+                ? Number((ctxInput as string).trim())
+                : apiCtxLimit ?? 128000;
+              if (addModelToCustomProviderJson(selectedProviderName, modelValue, contextLimit)) {
+                log.success(pc.green(`✓ Added "${modelValue}" (context_limit: ${contextLimit.toLocaleString("ru-RU")}) to ${selectedProviderName} provider config`));
               } else {
                 log.warn(pc.yellow(`⚠ Could not update provider config`));
               }
@@ -546,6 +562,33 @@ async function main() {
 
           if (isCancel(typed)) { step = "model"; continue; }
           modelValue = (typed as string).trim() || defaultModel;
+
+          // If custom provider and model not in JSON, offer to add with context_limit
+          if (selectedProviderName.startsWith("custom_") && !isModelInCustomProviderJson(selectedProviderName, modelValue)) {
+            const addToJson = await confirm({
+              message: `Add "${modelValue}" to "${selectedProviderName}" provider's model list?`,
+              initialValue: true,
+            });
+            if (!isCancel(addToJson) && addToJson) {
+              const ctxInput = await text({
+                message: `Context limit for "${modelValue}" (tokens): ${pc.dim("(Enter for 128000)")}`,
+                placeholder: "128000",
+                defaultValue: "128000",
+                validate: (val) => {
+                  if (val && val.trim() && isNaN(Number(val.trim()))) return "Must be a number";
+                  return;
+                },
+              });
+              const contextLimit = !isCancel(ctxInput) && (ctxInput as string).trim()
+                ? Number((ctxInput as string).trim())
+                : 128000;
+              if (addModelToCustomProviderJson(selectedProviderName, modelValue, contextLimit)) {
+                log.success(pc.green(`✓ Added "${modelValue}" (context_limit: ${contextLimit.toLocaleString("ru-RU")}) to ${selectedProviderName} provider config`));
+              } else {
+                log.warn(pc.yellow(`⚠ Could not update provider config`));
+              }
+            }
+          }
         } else {
           modelValue = modelChoice as string;
         }

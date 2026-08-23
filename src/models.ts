@@ -34,9 +34,35 @@ export async function detectOllama(): Promise<OllamaModelInfo[] | null> {
   }
 }
 
+// ─── API model info ──────────────────────────────────────────────────────────
+
+export interface ApiModelInfo {
+  id: string;
+  contextLimit?: number;
+}
+
+/**
+ * Try to extract context limit from a model object returned by the API.
+ * Standard OpenAI /v1/models doesn't include context window info,
+ * but some custom providers (like KodikRouter) add extra fields.
+ */
+function extractContextLimit(model: any): number | undefined {
+  if (typeof model !== "object" || model === null) return undefined;
+
+  // Various field names used by different providers
+  for (const field of ["context_limit", "max_context_length", "max_context", "context_window", "max_tokens"]) {
+    const val = model[field];
+    if (val !== undefined && val !== null) {
+      const num = Number(val);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+  return undefined;
+}
+
 // ─── OpenAI API model fetcher ────────────────────────────────────────────────
 
-export async function fetchModelsFromApi(provider: ProviderInfo): Promise<string[]> {
+export async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiModelInfo[]> {
   if (!provider.authToken) {
     const envHint = provider.apiKeyEnv || `${provider.name.replace(/^custom_/, "").toUpperCase()}_API_KEY`;
     throw new Error(
@@ -65,7 +91,11 @@ export async function fetchModelsFromApi(provider: ProviderInfo): Promise<string
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
   const data: any = await response.json();
-  const models: string[] = (data.data || []).map((m: any) => m.id).sort();
-  s.stop(`Found ${models.length} models`);
+  const models: ApiModelInfo[] = (data.data || [])
+    .map((m: any) => ({ id: m.id, contextLimit: extractContextLimit(m) }))
+    .sort((a: ApiModelInfo, b: ApiModelInfo) => a.id.localeCompare(b.id));
+
+  const withCtx = models.filter((m) => m.contextLimit !== undefined).length;
+  s.stop(`Found ${models.length} models${withCtx > 0 ? ` (${withCtx} with context limit)` : ""}`);
   return models;
 }

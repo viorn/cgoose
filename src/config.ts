@@ -196,9 +196,10 @@ export function isModelInCustomProviderJson(providerName: string, modelName: str
 
 /**
  * Add a model to the custom provider's JSON file models list (if not already present).
+ * @param contextLimit - Optional context window size. If not provided, defaults to 128000.
  * Returns true if added, false if already present or on error.
  */
-export function addModelToCustomProviderJson(providerName: string, modelName: string): boolean {
+export function addModelToCustomProviderJson(providerName: string, modelName: string, contextLimit?: number): boolean {
   const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
   if (!existsSync(filePath)) return false;
   try {
@@ -213,12 +214,35 @@ export function addModelToCustomProviderJson(providerName: string, modelName: st
     });
     if (already) return false;
 
-    data.models.push({ name: modelName });
+    data.models.push({ name: modelName, context_limit: contextLimit ?? 128000 });
     writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Read context_limit for a model from a custom provider's JSON file.
+ * Returns undefined if the model/limit is not configured.
+ */
+export function getModelContextLimit(providerName: string, modelName: string): number | undefined {
+  const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
+  if (!existsSync(filePath)) return undefined;
+  try {
+    const data = JSON.parse(readFileSync(filePath, "utf-8"));
+    if (!Array.isArray(data.models)) return undefined;
+    for (const m of data.models) {
+      const name = typeof m === "string" ? m : m?.name;
+      if (name === modelName) {
+        const limit = typeof m === "object" && m !== null ? m.context_limit : undefined;
+        return limit !== undefined && limit !== null ? Number(limit) : undefined;
+      }
+    }
+  } catch {
+    /* corrupt file */
+  }
+  return undefined;
 }
 
 /** Set top-level env vars from config.yaml on process.env so child processes inherit them */

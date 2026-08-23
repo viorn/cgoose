@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import process from "node:process";
 import pc from "picocolors";
 import { writeProjectMeta } from "./project";
+import { getModelContextLimit } from "./config";
 import type { ProviderInfo } from "./config";
 
 export function launchGoose(
@@ -29,6 +30,15 @@ export function launchGoose(
     launchEnv["OPENAI_BASE_URL"] = providerInfo.baseUrl;
     if (providerInfo.authToken) {
       launchEnv["OPENAI_API_KEY"] = providerInfo.authToken;
+    }
+  }
+
+  // Set GOOSE_CONTEXT_LIMIT from custom provider JSON so Goose actually uses it
+  if (providerInfo.name.startsWith("custom_")) {
+    const contextLimit = getModelContextLimit(providerInfo.name, model);
+    if (contextLimit !== undefined) {
+      delete launchEnv["GOOSE_CONTEXT_LIMIT"]; // clear any stale value
+      launchEnv["GOOSE_CONTEXT_LIMIT"] = String(contextLimit);
     }
   }
 
