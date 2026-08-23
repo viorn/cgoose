@@ -14,6 +14,16 @@
 
 ---
 
+## Screenshots
+
+| Session list | New session |
+|:--:|:--:|
+| ![sessions](sessions.jpg) | ![new session](new-session.jpg) |
+| Provider selection | Model selection |
+| ![providers](providers.jpg) | ![models](models.jpg) |
+
+---
+
 ## Why cgoose?
 
 Goose's CLI works, but every time you start a session you need to remember:
