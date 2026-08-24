@@ -69,11 +69,11 @@ async function handleDeleteSessions(
     for (const session of emptySessions) {
       if (deleteSessionById(session.id)) {
         ok++;
-        // Clean up associated worktree
+        // Clean up associated worktree (mapped by session NAME, not UUID id)
         const wtMappings = getWorktreeMappings();
-        if (wtMappings[session.id]) {
-          removeWorktree(session.id);
-          removeWorktreeMapping(session.id);
+        if (wtMappings[session.name]) {
+          removeWorktree(session.name);
+          removeWorktreeMapping(session.name);
         }
       } else fail++;
     }
@@ -99,9 +99,9 @@ async function handleDeleteSessions(
       if (deleteSessionById(session.id)) {
         ok++;
         const wtMappings = getWorktreeMappings();
-        if (wtMappings[session.id]) {
-          removeWorktree(session.id);
-          removeWorktreeMapping(session.id);
+        if (wtMappings[session.name]) {
+          removeWorktree(session.name);
+          removeWorktreeMapping(session.name);
         }
       } else fail++;
     }
@@ -134,10 +134,12 @@ async function handleDeleteSessions(
   for (const id of selectedIDs as string[]) {
     if (deleteSessionById(id)) {
       ok++;
+      const session = _allSessions.find((s) => s.id === id);
+      const sessionName = session?.name ?? id;
       const wtMappings = getWorktreeMappings();
-      if (wtMappings[id]) {
-        removeWorktree(id);
-        removeWorktreeMapping(id);
+      if (wtMappings[sessionName]) {
+        removeWorktree(sessionName);
+        removeWorktreeMapping(sessionName);
       }
     } else fail++;
   }

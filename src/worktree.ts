@@ -55,7 +55,6 @@ function sanitize(sessionName: string): string {
   return sessionName
     .replace(/[^a-zA-Z0-9._-]/g, "_")
     .replace(/^[^a-zA-Z0-9]+/, "")
-    .toLowerCase()
     .slice(0, 80);
 }
 
@@ -87,6 +86,8 @@ export function getBranchName(sessionName: string): string {
  * Also checks if the directory exists on disk.
  */
 function worktreeExists(path: string): boolean {
+  // Must exist both in git registry AND on disk
+  let inRegistry = false;
   try {
     const output = execSync("git worktree list --porcelain", {
       encoding: "utf-8",
@@ -95,11 +96,12 @@ function worktreeExists(path: string): boolean {
     });
     for (const line of output.split("\n")) {
       if (line.startsWith("worktree ") && resolve(line.slice(9)) === resolve(path)) {
-        return true;
+        inRegistry = true;
+        break;
       }
     }
   } catch { /* ignore */ }
-  return existsSync(path);
+  return inRegistry && existsSync(path);
 }
 
 /**
@@ -144,6 +146,33 @@ export function createWorktree(sessionName: string): string | null {
     });
     return path;
   } catch (err) {
+    // Stale registration — worktree missing from disk but git still knows it.
+    // Prune it and try again.
+    if (String(err).includes("missing but already registered")) {
+      try {
+        execSync(`git worktree prune`, {
+          encoding: "utf-8",
+          timeout: 5_000,
+          stdio: ["ignore", "pipe", "pipe"],
+          cwd: repoRoot,
+        });
+        console.log(pc.dim(`  🧹 Pruned stale worktree registration`));
+      } catch { /* best effort */ }
+      // Retry full creation
+      try {
+        execSync(`git worktree add -b "${branch}" "${path}"`, {
+          encoding: "utf-8",
+          timeout: 15_000,
+          stdio: ["ignore", "pipe", "pipe"],
+          cwd: repoRoot,
+        });
+        return path;
+      } catch (e) {
+        console.log(pc.red(`✗ Failed to create worktree: ${e}`));
+        return null;
+      }
+    }
+
     // Branch may already exist — try attaching to existing branch
     try {
       execSync(`git worktree add "${path}" "${branch}"`, {
