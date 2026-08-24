@@ -3,20 +3,21 @@
  *
  * Convention:
  *   Worktree path: <repo-root>/.worktree/<sanitized-session-name>
- *   Branch name:   cgoose-<sanitized-session-name>
+ *   Branch name:   <sanitized-session-name>
  *
  * Worktrees live inside the repo in .worktree/ which is gitignored.
  * This keeps everything self-contained and discoverable from the project root.
  */
 
 import { execSync } from "node:child_process";
-import { resolve, join, dirname } from "node:path";
+import { resolve, join, dirname, basename } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import pc from "picocolors";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CGOOSE_WT_PREFIX = "cgoose-";
+/** Prefix for the .worktree directory name under repo root */
+const WORKTREE_DIR = ".worktree";
 
 // ─── Git repo detection ───────────────────────────────────────────────────────
 
@@ -66,12 +67,17 @@ function sanitize(sessionName: string): string {
  * The .worktree/ directory should be in .gitignore (added automatically).
  */
 export function getWorktreePath(repoRoot: string, sessionName: string): string {
-  return join(repoRoot, ".worktree", sanitize(sessionName));
+  return join(repoRoot, WORKTREE_DIR, sanitize(sessionName));
+}
+
+/** Check if a path is inside the .worktree directory (i.e. cgoose-managed) */
+function isCgooseWorktree(repoRoot: string, path: string): boolean {
+  return resolve(path).startsWith(resolve(join(repoRoot, WORKTREE_DIR)));
 }
 
 /** Get the git branch name for a session worktree */
 export function getBranchName(sessionName: string): string {
-  return `${CGOOSE_WT_PREFIX}${sanitize(sessionName)}`;
+  return sanitize(sessionName);
 }
 
 // ─── Worktree CRUD ───────────────────────────────────────────────────────────
@@ -227,20 +233,14 @@ export function getRepoWorktreePaths(): string[] {
     for (const entry of entries) {
       if (!entry.trim()) continue;
       let path = "";
-      let isCgoose = false;
 
       for (const line of entry.split("\n")) {
         if (line.startsWith("worktree ")) {
           path = resolve(line.slice(9).trim());
-        } else if (line.startsWith("branch ")) {
-          const ref = line.slice(7).trim().replace("refs/heads/", "");
-          if (ref.startsWith(CGOOSE_WT_PREFIX)) {
-            isCgoose = true;
-          }
         }
       }
 
-      if (path && isCgoose) {
+      if (path && isCgooseWorktree(repoRoot, path)) {
         worktrees.push(path);
       }
     }
@@ -298,13 +298,18 @@ export function getWorktreeSessionNames(): string[] {
     const entries = output.split(/\n\n+/);
     for (const entry of entries) {
       if (!entry.trim()) continue;
+      let path = "";
+
       for (const line of entry.split("\n")) {
-        if (line.startsWith("branch ")) {
-          const ref = line.slice(7).trim().replace("refs/heads/", "");
-          if (ref.startsWith(CGOOSE_WT_PREFIX)) {
-            names.push(ref.slice(CGOOSE_WT_PREFIX.length));
-          }
+        if (line.startsWith("worktree ")) {
+          path = resolve(line.slice(9).trim());
         }
+      }
+
+      if (path && isCgooseWorktree(repoRoot, path)) {
+        // Extract session name from the directory name inside .worktree/
+        const name = basename(path);
+        if (name) names.push(name);
       }
     }
   } catch { /* ignore */ }

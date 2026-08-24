@@ -2,7 +2,7 @@
  * Launch Goose with session name, provider, and model
  *
  * Git worktree integration:
- * - New sessions create a git worktree (<repo-parent>/<session-name>) and launch Goose there
+ * - New sessions create a git worktree (<repo-root>/.worktree/<name>) and launch Goose there
  * - Resuming existing sessions check for an existing worktree and launch there if found
  * - Skips worktree creation if not in a git repo or CGOOSE_NO_WORKTREE=1 is set
  */
@@ -40,7 +40,7 @@ export function launchGoose(
       worktreePath = createWorktree(worktreeName);
       if (worktreePath) {
         console.log(pc.dim(`  📂 Worktree: ${pc.cyan(worktreePath)}`));
-        console.log(pc.dim(`  🌿 Branch:   ${pc.green(`cgoose-${worktreeName}`)}`));
+        console.log(pc.dim(`  🌿 Branch:   ${pc.green(worktreeName)}`));
         saveWorktreeMapping(worktreeName, worktreePath);
       }
     } else {
