@@ -13,7 +13,7 @@ Built with [Clack](https://github.com/natemoo-re/clack) prompts + [picocolors](h
 ### Language & Runtime
 - **TypeScript** — runs under [Bun](https://bun.sh)
 - Entry point: `src/index.ts` (~520 lines)
-- Modular design — 7 source files under `src/`
+- Modular design — 8 source files under `src/`
 
 ### Dependencies
 | Package | Purpose |
@@ -78,6 +78,15 @@ Entry point. Orchestrates the 5-step workflow as a `while (true)` state machine 
 - **`getCurrentDirName()`** — Returns basename of CWD.
 - **`generateSessionName()`** — Auto-name: `<dirname>-YYYY-MM-DD-HH-mm`.
 
+### `worktree.ts` — Git worktree management
+- **`createWorktree()`** — Creates a dedicated git worktree under `<repo>/.worktree/<sanitized-name>` with a matching branch. Handles stale registrations via `git worktree prune` retry.
+- **`removeWorktree()`** — Removes worktree and branch when a session is deleted.
+- **`getRepoWorktreePaths()`** — Lists all worktrees under `.worktree/` directory (identifies cgoose-managed ones by path, not branch prefix).
+- **`getWorktreeSessionNames()`** — Extracts session names from existing worktree paths for session list display.
+- **`getSessionWorktreePath()`** — Resolves worktree path for session name (used on resume).
+- **`isInsideGitRepo()`** — Checks CWD is inside a git repo.
+- Worktree creation is skipped if `CGOOSE_NO_WORKTREE=1` is set.
+
 ---
 
 ## Key Features
@@ -120,3 +129,4 @@ Entry point. Orchestrates the 5-step workflow as a `while (true)` state machine 
 5. **Direct SQLite deletion** — Bypasses Goose CLI, writes SQL directly for speed and reliability.
 6. **Ollama-first** — Auto-detects local Ollama, warns about tools support, integrates as a first-class provider.
 7. **Custom provider support** — Reads engine/baseUrl/auth from JSON files, injects env vars at spawn time, clears conflicting vars.
+8. **Git worktree isolation** — On new session, creates `<repo>/.worktree/<name>` with matching branch `cgoose-<name>`. Goose runs inside the worktree, keeping changes isolated from main branches. Worktrees are detected by path (under `.worktree/`), not by branch prefix — robust regardless of naming convention.
