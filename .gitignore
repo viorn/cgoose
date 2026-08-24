@@ -4,4 +4,4 @@ bun.lock
 cgoose
 cgoose-*-linux-*
 ${OUTFILE}
-.goose/
+.worktree/
