@@ -2,15 +2,15 @@
  * Git worktree management for cgoose sessions
  *
  * Convention:
- *   Worktree path: <repo-parent>/<session-name>
+ *   Worktree path: <repo-root>/.goose/worktrees/<sanitized-session-name>
  *   Branch name:   cgoose-<sanitized-session-name>
  *
- * Worktrees are created as siblings of the main repo directory.
- * This keeps them outside the repo (no gitignore needed) and discoverable.
+ * Worktrees live inside the repo in .goose/worktrees/ which is gitignored.
+ * This keeps everything self-contained and discoverable from the project root.
  */
 
 import { execSync } from "node:child_process";
-import { resolve, dirname, join, basename } from "node:path";
+import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
 import pc from "picocolors";
 
@@ -60,11 +60,13 @@ function sanitize(sessionName: string): string {
 
 /**
  * Get the worktree path for a session.
- * Path: <repo-parent>/<sanitized-session-name>
+ * Path: <repo-root>/.goose/worktrees/<sanitized-session-name>
+ *
+ * This keeps all worktrees inside the repo in a hidden directory.
+ * The .goose/ directory should be in .gitignore (added automatically).
  */
 export function getWorktreePath(repoRoot: string, sessionName: string): string {
-  const parent = dirname(resolve(repoRoot));
-  return join(parent, sanitize(sessionName));
+  return join(repoRoot, ".goose", "worktrees", sanitize(sessionName));
 }
 
 /** Get the git branch name for a session worktree */

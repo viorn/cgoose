@@ -32,7 +32,8 @@ export function launchGoose(
       // Create a new worktree for this session
       worktreePath = createWorktree(sessionName);
       if (worktreePath) {
-        console.log(pc.dim(`  📂 Worktree: ${pc.cyan(worktreePath)} on branch ${pc.green(`cgoose-${sessionName}`)}`));
+        console.log(pc.dim(`  📂 Worktree: ${pc.cyan(worktreePath)}`));
+        console.log(pc.dim(`  🌿 Branch:   ${pc.green(`cgoose-${sessionName}`)}`));
         saveWorktreeMapping(sessionName, worktreePath);
       }
     } else if (sessionName) {
