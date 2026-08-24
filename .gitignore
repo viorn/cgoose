@@ -5,3 +5,4 @@ cgoose
 cgoose-*-linux-*
 ${OUTFILE}
 .worktree/
+.serena/
