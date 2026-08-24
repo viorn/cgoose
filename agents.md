@@ -44,6 +44,17 @@ bash build.sh
 | Per-project memory | `~/.config/cgoose/projects/<dir>-<hash>.json` |
 | Provider configs | `~/.config/goose/custom_providers/*.json` |
 
+## Git Worktree integration
+
+When cgoose creates a new session inside a git repository:
+1. A worktree is created at `<repo>/.worktree/<sanitized-session-name>`
+2. A matching git branch is created
+3. Goose runs inside that worktree — isolated from main branches
+4. On resume, cgoose detects the existing worktree and reuses it
+5. On session deletion, the worktree and branch are cleaned up
+
+Set `CGOOSE_NO_WORKTREE=1` to skip worktree creation.
+
 ## Common tasks
 
 ### Add a model to a custom provider config

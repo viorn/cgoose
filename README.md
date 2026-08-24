@@ -100,6 +100,14 @@ bun start
   - Environment variables
 - If a key is missing, cgoose shows a clear hint about which variable to set
 
+### Git Worktree Integration
+- **New sessions** create a dedicated **git worktree** under `<repo>/.worktree/<name>` with a matching branch
+- **Resume** detects existing worktree and launches Goose inside it — no manual checkout needed
+- **Isolation** — worktrees let you run Goose in a separate working tree without touching your main branches
+- **Cleanup** — deleting a session through cgoose also removes the worktree and branch
+- **Smart recovery** — detects stale worktree registrations and prunes them automatically
+- Skipped if not in a git repo or `CGOOSE_NO_WORKTREE=1` is set
+
 ### Launch
 - Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
@@ -131,6 +139,7 @@ Pressing **Esc** at any step goes back one step (not abort).
 | Secrets (keyring) | System keyring via libsecret (service: `secrets@goose:default`) |
 | Secrets (file) | `~/.config/goose/secrets.yaml` |
 | Per-project history | `~/.config/cgoose/projects/<dir>-<hash>.json` |
+| Git worktrees | `<repo>/.worktree/<name>` (per-project, gitignored) |
 | Session DB | `~/.local/share/goose/sessions/sessions.db` |
 
 ---

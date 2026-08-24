@@ -89,6 +89,13 @@ bun start
   - Переменные окружения
 - Если ключ отсутствует, cgoose показывает подсказку какую переменную установить
 
+### Git Worktree
+- **Новые сессии** создают выделенный **git worktree** в `<repo>/.worktree/<name>` с одноимённой веткой
+- **Возобновление** находит существующий worktree и запускает Goose внутри — ручной checkout не нужен
+- **Изоляция** — worktree позволяет запускать Goose в отдельном working tree, не трогая основные ветки
+- **Очистка** — удаление сессии через cgoose также удаляет worktree и ветку
+- Пропускается если не в git-репозитории или установлен `CGOOSE_NO_WORKTREE=1`
+
 ### Запуск
 - Устанавливает `OPENAI_BASE_URL` + `OPENAI_API_KEY` для кастомных провайдеров
 - Очищает конфликтующие переменные (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
@@ -118,6 +125,7 @@ bun start
 | Секреты (связка) | Системная связка ключей через libsecret (сервис: `secrets@goose:default`) |
 | Секреты (файл) | `~/.config/goose/secrets.yaml` |
 | История проектов | `~/.config/cgoose/projects/<дир>-<хэш>.json` |
+| Git worktree | `<repo>/.worktree/<name>` (для каждого проекта, в .gitignore) |
 | База сессий | `~/.local/share/goose/sessions/sessions.db` |
 
 ---

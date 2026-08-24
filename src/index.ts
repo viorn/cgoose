@@ -20,10 +20,11 @@ import pc from "picocolors";
 import { getCurrentDirName, generateSessionName } from "./utils";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
-import { readProjectMeta } from "./project";
+import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 import { launchGoose } from "./launcher";
+import { getProjectSessionDirs, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,15 @@ async function handleDeleteSessions(
     s.start("Deleting " + emptySessions.length + " empty sessions...");
     let ok = 0, fail = 0;
     for (const session of emptySessions) {
-      if (deleteSessionById(session.id)) ok++; else fail++;
+      if (deleteSessionById(session.id)) {
+        ok++;
+        // Clean up associated worktree (mapped by session NAME, not UUID id)
+        const wtMappings = getWorktreeMappings();
+        if (wtMappings[session.name]) {
+          removeWorktree(session.name);
+          removeWorktreeMapping(session.name);
+        }
+      } else fail++;
     }
     s.stop("Done: " + ok + " deleted, " + fail + " failed");
     return true;
@@ -87,7 +96,14 @@ async function handleDeleteSessions(
     s.start("Deleting " + dirSessions.length + " sessions...");
     let ok = 0, fail = 0;
     for (const session of dirSessions) {
-      if (deleteSessionById(session.id)) ok++; else fail++;
+      if (deleteSessionById(session.id)) {
+        ok++;
+        const wtMappings = getWorktreeMappings();
+        if (wtMappings[session.name]) {
+          removeWorktree(session.name);
+          removeWorktreeMapping(session.name);
+        }
+      } else fail++;
     }
     s.stop("Done: " + ok + " deleted, " + fail + " failed");
     return true;
@@ -116,7 +132,16 @@ async function handleDeleteSessions(
   s.start("Deleting " + selectedIDs.length + " session(s)...");
   let ok = 0, fail = 0;
   for (const id of selectedIDs as string[]) {
-    if (deleteSessionById(id)) ok++; else fail++;
+    if (deleteSessionById(id)) {
+      ok++;
+      const session = _allSessions.find((s) => s.id === id);
+      const sessionName = session?.name ?? id;
+      const wtMappings = getWorktreeMappings();
+      if (wtMappings[sessionName]) {
+        removeWorktree(sessionName);
+        removeWorktreeMapping(sessionName);
+      }
+    } else fail++;
   }
   s.stop("Done: " + ok + " deleted, " + fail + " failed");
   return true;
@@ -208,7 +233,16 @@ async function main() {
         const allSessions = getAllSessions();
         lastAllSessions = allSessions;
         const cwd = resolve(".");
-        const dirSessions = allSessions.filter((s) => s.working_dir === cwd);
+
+        // In a git repo, show sessions from all worktrees too (not just CWD)
+        const inRepo = isInsideGitRepo();
+        const projectDirs = inRepo ? getProjectSessionDirs(cwd) : [cwd];
+        const worktreeMap = inRepo ? getWorktreeMappings() : {};
+
+        const dirSessions = allSessions.filter((s) => {
+          if (!s.working_dir) return false;
+          return projectDirs.includes(s.working_dir);
+        });
 
         const sessionOptions: { label: string; value: string; hint?: string }[] = [];
 
@@ -229,7 +263,9 @@ async function main() {
         for (let i = 0; i < dirSessions.length && i < 50; i++) {
           const s = dirSessions[i];
           const { name, hint } = formatSessionHint(s);
-          sessionOptions.push({ label: pc.bold(name), value: s.id, hint });
+          const hasWorktree = worktreeMap[s.id] ? true : false;
+          const icon = hasWorktree ? pc.green(" 🌲") : "";
+          sessionOptions.push({ label: pc.bold(name) + icon, value: s.id, hint });
         }
 
         const selected = await autocomplete({
@@ -265,6 +301,17 @@ async function main() {
 
         sessionName = selected as string;
         isNewSession = false;
+
+        // When resuming, find the session's name to look up worktree mappings
+        // (sessions are stored by ID, but worktree is mapped by session name)
+        const selectedSession = allSessions.find((s) => s.id === sessionName);
+        const resumedSessionName = selectedSession?.name ?? sessionName;
+
+        // If resuming and session already has a worktree, switch cwd context
+        if (inRepo && worktreeMap[resumedSessionName]) {
+          console.log(pc.dim(`  📂 Session has worktree at ${pc.cyan(worktreeMap[resumedSessionName])}`));
+        }
+
         if (mode === "session-only" && selectedProviderName) {
           step = "launch";
         } else {
@@ -278,8 +325,9 @@ async function main() {
         const allSessions = getAllSessions();
         const suggested = generateSessionName(sessionPrefix);
         const customName = await text({
-          message: `Session name: ${pc.dim("(press Enter for auto-name from first message)")}`,
+          message: `Session name: ${pc.dim("(press Enter for auto-name)")}`,
           placeholder: suggested,
+          defaultValue: suggested,
           validate: (val) => {
             if (val && val.includes(" ")) return "Name cannot contain spaces";
             if (val && allSessions.find((s) => s.id === val.trim())) return "Session '" + val + "' already exists";
@@ -676,10 +724,17 @@ async function main() {
 
       // ─── STEP 5: Summary & Launch ───────────────────────────────────────
       case "launch": {
+        // Resolve session name for worktree mapping:
+        // - New sessions: sessionName is the name passed to Goose
+        // - Resumed sessions: sessionName is the session ID UUID,
+        //   but worktree is keyed by the session's original name
+        const sessionObj = !isNewSession ? lastAllSessions.find((s) => s.id === sessionName) : null;
+        const resolvedSessionName = sessionObj?.name ?? sessionName;
+
         const providerCfg: ProviderInfo = selectedProviderName === "ollama"
           ? { name: "ollama", model: modelValue, engine: "ollama" }
           : allProviders.find((p) => p.name === selectedProviderName)!;
-        const displayName = sessionName || "(auto — from first message)";
+        const displayName = resolvedSessionName || "(auto)";
         const displayProvider = selectedProviderName === "ollama"
           ? "🦙 Ollama (local)"
           : selectedProviderName;
@@ -697,7 +752,7 @@ async function main() {
           continue;
         }
 
-        launchGoose(sessionName, providerCfg, modelValue, isNewSession);
+        launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName);
         return; // never reached — launchGoose replaces process
       }
     }
