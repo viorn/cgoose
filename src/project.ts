@@ -19,6 +19,8 @@ export interface ProjectMeta {
   modelHistory: Record<string, string[]>;
   /** History of providers used in this project (first = last used) */
   providerHistory: string[];
+  /** Maps session name → worktree path (created via cgoose git worktree integration) */
+  worktrees?: Record<string, string>;
 }
 
 // ─── Project key ─────────────────────────────────────────────────────────────
@@ -74,5 +76,56 @@ export function writeProjectMeta(provider: string, model: string): void {
   const filteredProvHistory = providerHistory.filter((p) => p !== provider);
   const newProviderHistory = [provider, ...filteredProvHistory].slice(0, 10);
 
-  writeFileSync(path, JSON.stringify({ provider, modelHistory, providerHistory: newProviderHistory }, null, 2) + "\n");
+  // Preserve existing worktree mappings when merging
+  const worktrees = existing?.worktrees ?? {};
+  
+  writeFileSync(path, JSON.stringify({
+    provider,
+    modelHistory,
+    providerHistory: newProviderHistory,
+    worktrees,
+  }, null, 2) + "\n");
+}
+
+// ─── Worktree mapping ─────────────────────────────────────────────────────────
+
+/** Save a session-to-worktree mapping in the project meta */
+export function saveWorktreeMapping(sessionName: string, worktreePath: string): void {
+  const dir = CGOOSE_PROJECTS_DIR;
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const path = getProjectMetaPath();
+
+  let meta: Record<string, any> = {};
+  if (existsSync(path)) {
+    try { meta = JSON.parse(readFileSync(path, "utf-8")); } catch { meta = {}; }
+  }
+
+  if (!meta.worktrees) meta.worktrees = {};
+  meta.worktrees[sessionName] = worktreePath;
+
+  writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
+}
+
+/** Remove a session-to-worktree mapping from the project meta */
+export function removeWorktreeMapping(sessionName: string): void {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return;
+
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf-8"));
+    if (meta.worktrees?.[sessionName]) {
+      delete meta.worktrees[sessionName];
+      writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
+    }
+  } catch { /* ignore */ }
+}
+
+/** Get all worktree mappings for this project: { sessionName → worktreePath } */
+export function getWorktreeMappings(): Record<string, string> {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return {};
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf-8"));
+    return meta.worktrees ?? {};
+  } catch { return {}; }
 }

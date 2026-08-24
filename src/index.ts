@@ -20,10 +20,11 @@ import pc from "picocolors";
 import { getCurrentDirName, generateSessionName } from "./utils";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
-import { readProjectMeta } from "./project";
+import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 import { launchGoose } from "./launcher";
+import { getProjectSessionDirs, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,15 @@ async function handleDeleteSessions(
     s.start("Deleting " + emptySessions.length + " empty sessions...");
     let ok = 0, fail = 0;
     for (const session of emptySessions) {
-      if (deleteSessionById(session.id)) ok++; else fail++;
+      if (deleteSessionById(session.id)) {
+        ok++;
+        // Clean up associated worktree
+        const wtMappings = getWorktreeMappings();
+        if (wtMappings[session.id]) {
+          removeWorktree(session.id);
+          removeWorktreeMapping(session.id);
+        }
+      } else fail++;
     }
     s.stop("Done: " + ok + " deleted, " + fail + " failed");
     return true;
@@ -87,7 +96,14 @@ async function handleDeleteSessions(
     s.start("Deleting " + dirSessions.length + " sessions...");
     let ok = 0, fail = 0;
     for (const session of dirSessions) {
-      if (deleteSessionById(session.id)) ok++; else fail++;
+      if (deleteSessionById(session.id)) {
+        ok++;
+        const wtMappings = getWorktreeMappings();
+        if (wtMappings[session.id]) {
+          removeWorktree(session.id);
+          removeWorktreeMapping(session.id);
+        }
+      } else fail++;
     }
     s.stop("Done: " + ok + " deleted, " + fail + " failed");
     return true;
@@ -116,7 +132,14 @@ async function handleDeleteSessions(
   s.start("Deleting " + selectedIDs.length + " session(s)...");
   let ok = 0, fail = 0;
   for (const id of selectedIDs as string[]) {
-    if (deleteSessionById(id)) ok++; else fail++;
+    if (deleteSessionById(id)) {
+      ok++;
+      const wtMappings = getWorktreeMappings();
+      if (wtMappings[id]) {
+        removeWorktree(id);
+        removeWorktreeMapping(id);
+      }
+    } else fail++;
   }
   s.stop("Done: " + ok + " deleted, " + fail + " failed");
   return true;
@@ -208,7 +231,16 @@ async function main() {
         const allSessions = getAllSessions();
         lastAllSessions = allSessions;
         const cwd = resolve(".");
-        const dirSessions = allSessions.filter((s) => s.working_dir === cwd);
+
+        // In a git repo, show sessions from all worktrees too (not just CWD)
+        const inRepo = isInsideGitRepo();
+        const projectDirs = inRepo ? getProjectSessionDirs(cwd) : [cwd];
+        const worktreeMap = inRepo ? getWorktreeMappings() : {};
+
+        const dirSessions = allSessions.filter((s) => {
+          if (!s.working_dir) return false;
+          return projectDirs.includes(s.working_dir);
+        });
 
         const sessionOptions: { label: string; value: string; hint?: string }[] = [];
 
@@ -229,7 +261,9 @@ async function main() {
         for (let i = 0; i < dirSessions.length && i < 50; i++) {
           const s = dirSessions[i];
           const { name, hint } = formatSessionHint(s);
-          sessionOptions.push({ label: pc.bold(name), value: s.id, hint });
+          const hasWorktree = worktreeMap[s.id] ? true : false;
+          const icon = hasWorktree ? pc.green(" 🌲") : "";
+          sessionOptions.push({ label: pc.bold(name) + icon, value: s.id, hint });
         }
 
         const selected = await autocomplete({
