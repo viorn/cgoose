@@ -14,12 +14,16 @@ import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit } from "./config";
 import type { ProviderInfo } from "./config";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
+import { getCurrentDirName, generateSessionName } from "./utils";
 
 export function launchGoose(
   sessionName: string,
   providerInfo: ProviderInfo,
   model: string,
   isNew: boolean,
+  /** Session's original name (from db), for worktree lookup on resume.
+   *  On resume, sessionName is the UUID; this is the human-readable name. */
+  sessionDisplayName?: string,
 ): void {
   writeProjectMeta(providerInfo.name, model);
 
@@ -27,18 +31,21 @@ export function launchGoose(
   let worktreePath: string | null = null;
   const noWorktree = process.env.CGOOSE_NO_WORKTREE === "1";
 
+  // Use the display name for worktree (stable across creates and resumes)
+  const worktreeName = sessionDisplayName || sessionName || generateSessionName(getCurrentDirName());
+
   if (!noWorktree && isInsideGitRepo()) {
-    if (isNew && sessionName) {
+    if (isNew) {
       // Create a new worktree for this session
-      worktreePath = createWorktree(sessionName);
+      worktreePath = createWorktree(worktreeName);
       if (worktreePath) {
         console.log(pc.dim(`  📂 Worktree: ${pc.cyan(worktreePath)}`));
-        console.log(pc.dim(`  🌿 Branch:   ${pc.green(`cgoose-${sessionName}`)}`));
-        saveWorktreeMapping(sessionName, worktreePath);
+        console.log(pc.dim(`  🌿 Branch:   ${pc.green(`cgoose-${worktreeName}`)}`));
+        saveWorktreeMapping(worktreeName, worktreePath);
       }
-    } else if (sessionName) {
-      // Resuming — check if worktree exists
-      worktreePath = getSessionWorktreePath(sessionName);
+    } else {
+      // Resuming — find existing worktree by the session's original name
+      worktreePath = getSessionWorktreePath(worktreeName);
       if (worktreePath) {
         console.log(pc.dim(`  📂 Resuming worktree: ${pc.cyan(worktreePath)}`));
       }

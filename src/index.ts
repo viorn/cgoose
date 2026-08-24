@@ -299,6 +299,17 @@ async function main() {
 
         sessionName = selected as string;
         isNewSession = false;
+
+        // When resuming, find the session's name to look up worktree mappings
+        // (sessions are stored by ID, but worktree is mapped by session name)
+        const selectedSession = allSessions.find((s) => s.id === sessionName);
+        const resumedSessionName = selectedSession?.name ?? sessionName;
+
+        // If resuming and session already has a worktree, switch cwd context
+        if (inRepo && worktreeMap[resumedSessionName]) {
+          console.log(pc.dim(`  📂 Session has worktree at ${pc.cyan(worktreeMap[resumedSessionName])}`));
+        }
+
         if (mode === "session-only" && selectedProviderName) {
           step = "launch";
         } else {
@@ -312,8 +323,9 @@ async function main() {
         const allSessions = getAllSessions();
         const suggested = generateSessionName(sessionPrefix);
         const customName = await text({
-          message: `Session name: ${pc.dim("(press Enter for auto-name from first message)")}`,
+          message: `Session name: ${pc.dim("(press Enter for auto-name)")}`,
           placeholder: suggested,
+          defaultValue: suggested,
           validate: (val) => {
             if (val && val.includes(" ")) return "Name cannot contain spaces";
             if (val && allSessions.find((s) => s.id === val.trim())) return "Session '" + val + "' already exists";
@@ -710,10 +722,17 @@ async function main() {
 
       // ─── STEP 5: Summary & Launch ───────────────────────────────────────
       case "launch": {
+        // Resolve session name for worktree mapping:
+        // - New sessions: sessionName is the name passed to Goose
+        // - Resumed sessions: sessionName is the session ID UUID,
+        //   but worktree is keyed by the session's original name
+        const sessionObj = !isNewSession ? lastAllSessions.find((s) => s.id === sessionName) : null;
+        const resolvedSessionName = sessionObj?.name ?? sessionName;
+
         const providerCfg: ProviderInfo = selectedProviderName === "ollama"
           ? { name: "ollama", model: modelValue, engine: "ollama" }
           : allProviders.find((p) => p.name === selectedProviderName)!;
-        const displayName = sessionName || "(auto — from first message)";
+        const displayName = resolvedSessionName || "(auto)";
         const displayProvider = selectedProviderName === "ollama"
           ? "🦙 Ollama (local)"
           : selectedProviderName;
@@ -731,7 +750,7 @@ async function main() {
           continue;
         }
 
-        launchGoose(sessionName, providerCfg, modelValue, isNewSession);
+        launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName);
         return; // never reached — launchGoose replaces process
       }
     }
