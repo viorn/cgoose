@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "agent-lsp": {
+      "type": "stdio",
+      "command": "agent-lsp",
+      "args": [
+        "c:clangd",
+        "cpp:clangd",
+        "go:gopls",
+        "javascript:typescript-language-server,--stdio",
+        "kotlin:kotlin-language-server",
+        "rust:rust-analyzer",
+        "typescript:typescript-language-server,--stdio"
+      ]
+    }
+  }
+}

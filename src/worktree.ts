@@ -10,8 +10,8 @@
  */
 
 import { execSync } from "node:child_process";
-import { resolve, join } from "node:path";
-import { existsSync } from "node:fs";
+import { resolve, join, dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
 import pc from "picocolors";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -122,6 +122,12 @@ export function createWorktree(sessionName: string): string | null {
     }
   } catch { /* ignore */ }
 
+  // Ensure parent dir exists — git worktree add won't create it
+  const parentDir = dirname(path);
+  if (!existsSync(parentDir)) {
+    mkdirSync(parentDir, { recursive: true });
+  }
+
   // Create worktree with a new branch from HEAD
   try {
     execSync(`git worktree add -b "${branch}" "${path}"`, {
@@ -141,7 +147,8 @@ export function createWorktree(sessionName: string): string | null {
         cwd: repoRoot,
       });
       return path;
-    } catch {
+    } catch (e2) {
+      console.log(pc.red(`✗ Failed to create worktree: ${e2}`));
       return null;
     }
   }
