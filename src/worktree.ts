@@ -198,7 +198,6 @@ export function removeWorktree(sessionName: string): boolean {
   if (!repoRoot) return false;
 
   const path = getWorktreePath(repoRoot, sessionName);
-  const branch = getBranchName(sessionName);
 
   // Remove worktree (force if dirty — we're deleting anyway)
   try {
@@ -208,28 +207,11 @@ export function removeWorktree(sessionName: string): boolean {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: repoRoot,
     });
-    // Also delete the branch
-    try {
-      execSync(`git branch -D "${branch}"`, {
-        encoding: "utf-8",
-        timeout: 3_000,
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: repoRoot,
-      });
-    } catch { /* branch may not exist or already deleted */ }
     return true;
   } catch {
     // Path may not exist as worktree — clean up directory manually
     try {
       execSync(`rm -rf "${path}"`, { timeout: 5_000 });
-    } catch { /* ignore */ }
-    try {
-      execSync(`git branch -D "${branch}"`, {
-        encoding: "utf-8",
-        timeout: 3_000,
-        stdio: ["ignore", "pipe", "pipe"],
-        cwd: repoRoot,
-      });
     } catch { /* ignore */ }
     return false;
   }
