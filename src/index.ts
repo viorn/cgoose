@@ -311,13 +311,6 @@ async function main() {
         const providerHistory = lastMeta?.providerHistory ?? [];
         const providerOptions: { label: string; value: string; hint?: string }[] = [];
 
-        // ── "Add custom provider..." option always at top ─────────────────
-        providerOptions.push({
-          label: pc.cyan("🆕 Add custom provider..."),
-          value: "__add_provider__",
-          hint: pc.dim("OpenAI/Anthropic/Ollama compatible"),
-        });
-
         // Sort all providers (config + discovered): history first, then alphabetical
         const sortedProviders = [...allProviders].sort((a, b) => {
           const aIdx = providerHistory.indexOf(a.name);
@@ -383,6 +376,13 @@ async function main() {
             providerOptions.push(opt);
           }
         }
+
+        // ── "Add custom provider..." option always at bottom ────────────
+        providerOptions.push({
+          label: pc.cyan("🆕 Add custom provider..."),
+          value: "__add_provider__",
+          hint: pc.dim("OpenAI/Anthropic/Ollama compatible"),
+        });
 
         const selected = await autocomplete({
           message: `Provider: ${pc.dim("(Esc ← back to sessions)")}`,

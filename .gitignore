@@ -3,3 +3,4 @@ bun.lock
 .goose-tui.json
 cgoose
 cgoose-*-linux-*
+${OUTFILE}
