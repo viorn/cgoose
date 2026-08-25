@@ -206,6 +206,7 @@ async function main() {
         (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
       )[0];
       if (lastSession) {
+        lastAllSessions = allSessions; // ← populate so launch step can resolve display name
         sessionName = lastSession.id;
         isNewSession = false;
         step = "launch";
