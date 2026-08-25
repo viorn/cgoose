@@ -31,7 +31,8 @@ export function launchGoose(
 
   // ─── Git worktree setup ────────────────────────────────────────────────
   let worktreePath: string | null = null;
-  const noWorktree = process.env.CGOOSE_NO_WORKTREE === "1";
+  const forceWorktree = process.env.CGOOSE_FORCE_WORKTREE === "1";
+  const noWorktree = forceWorktree ? false : process.env.CGOOSE_NO_WORKTREE === "1";
 
   // Use the display name for worktree (stable across creates and resumes)
   const worktreeName = sessionDisplayName || sessionName || generateSessionName(getCurrentDirName());

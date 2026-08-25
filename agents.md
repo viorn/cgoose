@@ -54,6 +54,9 @@ When cgoose creates a new session inside a git repository:
 5. On session deletion, the worktree and branch are cleaned up
 
 Set `CGOOSE_NO_WORKTREE=1` to skip worktree creation.
+Set `CGOOSE_FORCE_WORKTREE=1` to force worktree creation (overrides `CGOOSE_NO_WORKTREE`).
+
+CLI flags: `-w` forces worktree, `-m` disables it. Combined variants: `wa`, `ws`, `wn`, `ma`, `ms`, `mn`.
 
 ## Local Config Overrides
 

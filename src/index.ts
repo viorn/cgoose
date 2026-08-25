@@ -4,12 +4,16 @@
  *
  * CLI flags (single-letter, like tmux):
  *   m    No-worktree: run interactively without git worktree isolation
+ *   w    Force worktree: enable git worktree isolation (overrides CGOOSE_NO_WORKTREE=1)
  *   a    Auto-resume: quick resume to last session in this directory
  *   n    New session: skip pickers, start new with last provider/model
  *   s    Sessions only: picker only, then launch with last provider/model
  *   ma   Like a but without git worktree isolation (shortcut for m+a)
  *   ms   Like s but without git worktree isolation (shortcut for m+s)
  *   mn   Like n but without git worktree isolation (shortcut for m+n)
+ *   wa   Like a but with worktree forced on (shortcut for w+a)
+ *   ws   Like s but with worktree forced on (shortcut for w+s)
+ *   wn   Like n but with worktree forced on (shortcut for w+n)
  *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
@@ -186,15 +190,30 @@ async function main() {
   // ─── CLI flags ───────────────────────────────────────────────────────────
   const args = process.argv.slice(2);
 
+  // Detect worktree force flag (w, wa, ws, wn) — overrides CGOOSE_NO_WORKTREE
+  const forceWorktree = args.includes("w") || args.includes("wa") || args.includes("ws") || args.includes("wn");
+  if (forceWorktree) {
+    process.env.CGOOSE_FORCE_WORKTREE = "1";
+    delete process.env.CGOOSE_NO_WORKTREE;
+  }
+
   // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
-  const noWorktree = args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn");
+  const noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
   if (noWorktree) {
     process.env.CGOOSE_NO_WORKTREE = "1";
   }
 
-  // Resolve mode: shortcuts like ma/ms/mn are composed, plain "m" falls back to full
+  // Resolve mode: shortcuts like w*/m* are composed, plain "w" / "m" falls back to full
   let mode: string;
-  if (args.includes("ma")) {
+  if (args.includes("wa")) {
+    mode = "auto";
+  } else if (args.includes("wn")) {
+    mode = "new";
+  } else if (args.includes("ws")) {
+    mode = "session-only";
+  } else if (args.includes("w")) {
+    mode = "full";
+  } else if (args.includes("ma")) {
     mode = "auto";
   } else if (args.includes("mn")) {
     mode = "new";
