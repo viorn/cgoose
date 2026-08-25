@@ -24,7 +24,7 @@ import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./p
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 import { launchGoose } from "./launcher";
-import { getProjectSessionDirs, isInsideGitRepo, removeWorktree } from "./worktree";
+import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -192,13 +192,16 @@ async function main() {
   }
 
   if (mode === "auto") {
-    // Quick resume: find last session in this directory
+    // Quick resume: find last session in this directory or its worktrees
     if (!selectedProviderName) {
       log.warn(pc.yellow("No previous session data for this project. Falling back to full workflow."));
     } else {
       const allSessions = getAllSessions();
       const cwd = resolve(".");
-      const dirSessions = allSessions.filter((s) => s.working_dir === cwd);
+      // Also consider sessions from git worktrees managed by cgoose
+      const worktreeDirs = getRepoWorktreePaths();
+      const relevantDirs = [cwd, ...worktreeDirs];
+      const dirSessions = allSessions.filter((s) => relevantDirs.includes(s.working_dir));
       const lastSession = dirSessions.sort(
         (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
       )[0];
