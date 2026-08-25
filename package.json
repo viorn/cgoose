@@ -1,6 +1,6 @@
 {
   "name": "cgoose",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "TUI for Goose AI sessions - session manager with provider/model selection",
   "type": "module",
   "main": "src/index.ts",
