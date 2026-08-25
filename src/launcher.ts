@@ -8,10 +8,12 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
 import pc from "picocolors";
 import { writeProjectMeta, saveWorktreeMapping } from "./project";
-import { getModelContextLimit } from "./config";
+import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
@@ -55,6 +57,45 @@ export function launchGoose(
   // ─── Provider env setup ──────────────────────────────────────────────────
   const effectiveProvider = providerInfo.name;
   const launchEnv: Record<string, string> = { ...process.env as Record<string, string> };
+
+  // ─── Goose additional config ────────────────────────────────────────────
+  const configDir = worktreePath && existsSync(join(worktreePath, ".goose", "config.yaml"))
+    ? worktreePath
+    : getRepoRoot();
+  if (configDir) {
+    const configPath = join(configDir, ".goose", "config.yaml");
+    if (existsSync(configPath)) {
+      console.log(pc.dim(`  📋 Config:   ${pc.cyan(configPath)}`));
+      launchEnv["GOOSE_ADDITIONAL_CONFIG_FILES"] = configPath;
+
+      // Resolve environment variable references from the config file via Goose secrets
+      const secrets = getGooseSecrets();
+      if (Object.keys(secrets).length > 0) {
+        const raw = readFileSync(configPath, "utf-8");
+        // Find all $KEY or ${KEY} references in YAML values
+        const envRefRegex = /\$\{?(\w+)\}?/g;
+        const foundKeys = new Set<string>();
+        for (const line of raw.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const colonIdx = trimmed.indexOf(":");
+          if (colonIdx === -1) continue;
+          const value = trimmed.slice(colonIdx + 1).trim();
+          if (!value) continue;
+          // Match env var references in the value
+          let match;
+          while ((match = envRefRegex.exec(value)) !== null) {
+            foundKeys.add(match[1]);
+          }
+        }
+        for (const key of foundKeys) {
+          if (secrets[key] !== undefined) {
+            launchEnv[key] = secrets[key];
+          }
+        }
+      }
+    }
+  }
 
   if (providerInfo.engine && providerInfo.baseUrl) {
     for (const k of ["OPENAI_HOST", "OPENAI_BASE_PATH", "OPENAI_BASE_URL"]) {

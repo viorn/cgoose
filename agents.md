@@ -55,6 +55,13 @@ When cgoose creates a new session inside a git repository:
 
 Set `CGOOSE_NO_WORKTREE=1` to skip worktree creation.
 
+## Local Config Overrides
+
+cgoose looks for `.goose/config.yaml` in the session's worktree (if any) or the project root:
+
+- Sets `GOOSE_ADDITIONAL_CONFIG_FILES` env var so Goose loads it alongside the main config
+- Any `${VARIABLE}` or `$VARIABLE` references in YAML values are resolved from Goose secrets (system keyring, `~/.config/goose/secrets.yaml`) and injected into the session environment
+
 ## Common tasks
 
 ### Add a model to a custom provider config

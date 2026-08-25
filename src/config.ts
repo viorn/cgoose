@@ -293,6 +293,11 @@ export function getCustomProviderModels(providerName: string): CustomProviderMod
  * Read context_limit for a model from a custom provider's JSON file.
  * Returns undefined if the model/limit is not configured.
  */
+/** Read all Goose secrets from keyring and file-based storage */
+export function getGooseSecrets(): Record<string, string> {
+  return readGooseSecrets();
+}
+
 export function getModelContextLimit(providerName: string, modelName: string): number | undefined {
   const filePath = join(CUSTOM_PROVIDERS_DIR, `${providerName}.json`);
   if (!existsSync(filePath)) return undefined;

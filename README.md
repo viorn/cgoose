@@ -108,6 +108,11 @@ bun start
 - **Smart recovery** — detects stale worktree registrations and prunes them automatically
 - Skipped if not in a git repo or `CGOOSE_NO_WORKTREE=1` is set
 
+### Local Config Overrides
+- **`.goose/config.yaml`** — cgoose automatically discovers it in the project root or session worktree
+- Sets `GOOSE_ADDITIONAL_CONFIG_FILES` env var so Goose includes it alongside the main config
+- **Secrets resolution** — any `${VARIABLE}` or `$VARIABLE` references found in `.goose/config.yaml` values are resolved from Goose secrets (system keyring,`~/.config/goose/secrets.yaml`) and injected into the session environment
+
 ### Launch
 - Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
