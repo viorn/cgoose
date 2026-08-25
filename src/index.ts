@@ -6,6 +6,9 @@
  *   a    Auto-resume: quick resume to last session in this directory
  *   n    New session: skip pickers, start new with last provider/model
  *   s    Sessions only: picker only, then launch with last provider/model
+ *   ma   Like a but without git worktree isolation (CGOOSE_NO_WORKTREE=1)
+ *   ms   Like s but without git worktree isolation (CGOOSE_NO_WORKTREE=1)
+ *   mn   Like n but without git worktree isolation (CGOOSE_NO_WORKTREE=1)
  *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
@@ -181,7 +184,16 @@ async function main() {
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
   const args = process.argv.slice(2);
-  const mode = args.includes("a") ? "auto" : args.includes("n") ? "new" : args.includes("s") ? "session-only" : "full";
+
+  // Detect "minimal" variants (ma, ms, mn) — no worktree, root-only sessions
+  const noWorktree = args.includes("ma") || args.includes("ms") || args.includes("mn");
+  if (noWorktree) {
+    process.env.CGOOSE_NO_WORKTREE = "1";
+  }
+
+  const mode = noWorktree
+    ? args.includes("ma") ? "auto" : args.includes("mn") ? "new" : "session-only"
+    : args.includes("a") ? "auto" : args.includes("n") ? "new" : args.includes("s") ? "session-only" : "full";
 
   if (mode === "auto" || mode === "new" || mode === "session-only") {
     const meta = readProjectMeta();
@@ -199,7 +211,7 @@ async function main() {
       const allSessions = getAllSessions();
       const cwd = resolve(".");
       // Also consider sessions from git worktrees managed by cgoose
-      const worktreeDirs = getRepoWorktreePaths();
+      const worktreeDirs = noWorktree ? [] : getRepoWorktreePaths();
       const relevantDirs = [cwd, ...worktreeDirs];
       const dirSessions = allSessions.filter((s) => relevantDirs.includes(s.working_dir));
       const lastSession = dirSessions.sort(
@@ -239,7 +251,7 @@ async function main() {
         const cwd = resolve(".");
 
         // In a git repo, show sessions from all worktrees too (not just CWD)
-        const inRepo = isInsideGitRepo();
+        const inRepo = !noWorktree && isInsideGitRepo();
         const projectDirs = inRepo ? getProjectSessionDirs(cwd) : [cwd];
         const worktreeMap = inRepo ? getWorktreeMappings() : {};
 
