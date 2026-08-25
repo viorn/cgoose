@@ -3,12 +3,13 @@
  * cgoose — TUI for Goose AI Sessions
  *
  * CLI flags (single-letter, like tmux):
+ *   m    No-worktree: run interactively without git worktree isolation
  *   a    Auto-resume: quick resume to last session in this directory
  *   n    New session: skip pickers, start new with last provider/model
  *   s    Sessions only: picker only, then launch with last provider/model
- *   ma   Like a but without git worktree isolation (CGOOSE_NO_WORKTREE=1)
- *   ms   Like s but without git worktree isolation (CGOOSE_NO_WORKTREE=1)
- *   mn   Like n but without git worktree isolation (CGOOSE_NO_WORKTREE=1)
+ *   ma   Like a but without git worktree isolation (shortcut for m+a)
+ *   ms   Like s but without git worktree isolation (shortcut for m+s)
+ *   mn   Like n but without git worktree isolation (shortcut for m+n)
  *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
@@ -185,15 +186,25 @@ async function main() {
   // ─── CLI flags ───────────────────────────────────────────────────────────
   const args = process.argv.slice(2);
 
-  // Detect "minimal" variants (ma, ms, mn) — no worktree, root-only sessions
-  const noWorktree = args.includes("ma") || args.includes("ms") || args.includes("mn");
+  // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
+  const noWorktree = args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn");
   if (noWorktree) {
     process.env.CGOOSE_NO_WORKTREE = "1";
   }
 
-  const mode = noWorktree
-    ? args.includes("ma") ? "auto" : args.includes("mn") ? "new" : "session-only"
-    : args.includes("a") ? "auto" : args.includes("n") ? "new" : args.includes("s") ? "session-only" : "full";
+  // Resolve mode: shortcuts like ma/ms/mn are composed, plain "m" falls back to full
+  let mode: string;
+  if (args.includes("ma")) {
+    mode = "auto";
+  } else if (args.includes("mn")) {
+    mode = "new";
+  } else if (args.includes("ms")) {
+    mode = "session-only";
+  } else if (args.includes("m")) {
+    mode = "full";
+  } else {
+    mode = args.includes("a") ? "auto" : args.includes("n") ? "new" : args.includes("s") ? "session-only" : "full";
+  }
 
   if (mode === "auto" || mode === "new" || mode === "session-only") {
     const meta = readProjectMeta();
