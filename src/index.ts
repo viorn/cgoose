@@ -276,7 +276,6 @@ async function main() {
         sessionOptions.push({
           label: pc.green("\u2726 Create new session"),
           value: "__new__",
-          hint: "prefix: " + sessionPrefix,
         });
 
         if (dirSessions.length > 0) {
@@ -578,10 +577,11 @@ async function main() {
         const allHistory = lastMeta?.modelHistory?.[selectedProviderName] ?? [];
         const historyModels = allHistory.filter((m) => m !== defaultModel);
         for (const m of historyModels) {
+          const isConfigured = selectedProviderName.startsWith("custom_") && isModelInCustomProviderJson(selectedProviderName, m);
           modelOptions.push({
             label: pc.dim(m),
             value: m,
-            hint: pc.dim("history"),
+            hint: isConfigured ? pc.dim("configured") : pc.dim("history"),
           });
         }
 
