@@ -3,6 +3,8 @@
  * cgoose — TUI for Goose AI Sessions
  *
  * CLI flags (single-letter, like tmux):
+ *   e    Edit mode: choose a session → choose a user message → rollback
+ *        (permanently delete messages from that point forward).
  *   m    No-worktree: run interactively without git worktree isolation
  *   w    Force worktree: enable git worktree isolation (overrides CGOOSE_NO_WORKTREE=1)
  *   a    Auto-resume: quick resume to last session in this directory
@@ -14,6 +16,8 @@
  *   wa   Like a but with worktree forced on (shortcut for w+a)
  *   ws   Like s but with worktree forced on (shortcut for w+s)
  *   wn   Like n but with worktree forced on (shortcut for w+n)
+ *   me   Edit mode without git worktree isolation
+ *   we   Edit mode with worktree forced on
  *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
@@ -29,14 +33,14 @@ import { getCurrentDirName, generateSessionName } from "./utils";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
 import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
-import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
+import { getAllSessions, deleteSessionById, formatSessionHint, getUserMessages, forkSession, rollbackSession, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 import { launchGoose } from "./launcher";
 import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Step = "session" | "session_name" | "provider" | "model" | "launch";
+type Step = "session" | "session_name" | "provider" | "model" | "launch" | "edit_session" | "edit_message" | "edit_confirm";
 
 // ─── Session deletion dialog ─────────────────────────────────────────────────
 
@@ -182,6 +186,7 @@ async function main() {
   // ─── State shared across steps ───────────────────────────────────────────
   let step: Step = "session";
   let sessionName = "";
+  let sessionDisplayName = ""; // human-readable name (for worktree lookups)
   let isNewSession = false;
   let selectedProviderName = "";
   let modelValue = "";
@@ -197,6 +202,9 @@ async function main() {
     delete process.env.CGOOSE_NO_WORKTREE;
   }
 
+  // Detect "fork" mode (e) — edit/fork existing sessions
+  const isEditMode = args.includes("e") || args.includes("me") || args.includes("we");
+
   // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
   const noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
   if (noWorktree) {
@@ -205,7 +213,9 @@ async function main() {
 
   // Resolve mode: shortcuts like w*/m* are composed, plain "w" / "m" falls back to full
   let mode: string;
-  if (args.includes("wa")) {
+  if (isEditMode) {
+    mode = "edit";
+  } else if (args.includes("wa")) {
     mode = "auto";
   } else if (args.includes("wn")) {
     mode = "new";
@@ -225,7 +235,9 @@ async function main() {
     mode = args.includes("a") ? "auto" : args.includes("n") ? "new" : args.includes("s") ? "session-only" : "full";
   }
 
-  if (mode === "auto" || mode === "new" || mode === "session-only") {
+  if (mode === "edit") {
+    step = "edit_session";
+  } else if (mode === "auto" || mode === "new" || mode === "session-only") {
     const meta = readProjectMeta();
     if (meta) {
       selectedProviderName = meta.provider;
@@ -766,6 +778,202 @@ async function main() {
 
         step = "launch";
         continue;
+      }
+
+      // ─── EDIT STEP 1: Session selection (no create/delete) ─────────────
+      case "edit_session": {
+        const allSessions = getAllSessions();
+        lastAllSessions = allSessions;
+        const cwd = resolve(".");
+
+        const inRepo = !noWorktree && isInsideGitRepo();
+        const projectDirs = inRepo ? getProjectSessionDirs(cwd) : [cwd];
+
+        const dirSessions = allSessions.filter((s) => {
+          if (!s.working_dir) return false;
+          return projectDirs.includes(s.working_dir);
+        }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+        if (dirSessions.length === 0) {
+          log.warn(pc.yellow("No sessions found in this directory to edit."));
+          log.info(pc.dim("  💡 Create a session first with 'cgoose' (no flags)"));
+          const goBack = await confirm({ message: "Go back?", initialValue: true });
+          if (!isCancel(goBack) && goBack) {
+            step = "session";
+          } else {
+            outro(pc.yellow("See you next time!"));
+            process.exit(0);
+          }
+          continue;
+        }
+
+        const sessionOptions = dirSessions.slice(0, 50).map((s) => {
+          const { name, hint } = formatSessionHint(s);
+          return { label: pc.bold(name), value: s.id, hint };
+        });
+
+        const selected = await autocomplete({
+          message: `${pc.yellow("✏")} Edit session ${pc.dim("(rollback by removing messages from a point forward)")}`,
+          placeholder: "Type to filter sessions...",
+          options: sessionOptions,
+          maxItems: 12,
+          filter: (search, opt) => {
+            const haystack = opt.value + " " + opt.label + " " + (opt.hint || "");
+            return haystack.toLowerCase().includes(search.toLowerCase());
+          },
+        });
+
+        if (isCancel(selected)) {
+          outro(pc.yellow("See you next time!"));
+          process.exit(0);
+        }
+
+        sessionName = selected as string;
+        // Store selected message ID for rollback later
+        // We'll read it from user input in the next step and stash it
+        const selSession = dirSessions.find((s) => s.id === selected);
+        if (selSession) {
+          sessionDisplayName = selSession.name;
+          if (selSession.provider_name) selectedProviderName = selSession.provider_name;
+          if (selSession.model_config?.model_name) modelValue = selSession.model_config.model_name;
+        }
+        step = "edit_message";
+        continue;
+      }
+
+      // ─── EDIT STEP 2: Select user message to rollback to ──────────────
+      case "edit_message": {
+        if (!sessionName) {
+          step = "edit_session";
+          continue;
+        }
+
+        const s = spinner();
+        s.start("Loading messages...");
+        const userMessages = getUserMessages(sessionName, 120);
+        s.stop("Loaded " + userMessages.length + " user message(s)");
+
+        if (userMessages.length === 0) {
+          log.warn(pc.yellow("No user text messages found in this session."));
+          const goBack = await confirm({ message: "Choose another session?", initialValue: true });
+          if (!isCancel(goBack) && goBack) {
+            step = "edit_session";
+          } else {
+            outro(pc.yellow("See you next time!"));
+            process.exit(0);
+          }
+          continue;
+        }
+
+        const msgOptions = userMessages.map((m, i) => ({
+          label: pc.bold(`#${i + 1}`) + pc.dim(` ${m.createdAt}`),
+          value: m.id,
+          hint: m.text,
+        }));
+
+        msgOptions.push({
+          label: pc.dim("\u2190 Go back to session selection"),
+          value: "__back__",
+          hint: "",
+        });
+
+        const selectedMsg = await autocomplete({
+          message: `${pc.yellow("✏")} Rollback to before message ${pc.dim("(everything from here forward will be removed, Esc ← back)")}`,
+          placeholder: "Type to search messages...",
+          options: msgOptions,
+          maxItems: 12,
+          filter: (search, opt) => {
+            const haystack = String(opt.value) + " " + opt.label + " " + (opt.hint || "");
+            if (!search) return true;
+            return haystack.toLowerCase().includes(search.toLowerCase());
+          },
+        });
+
+        if (isCancel(selectedMsg) || selectedMsg === "__back__") {
+          step = "edit_session";
+          continue;
+        }
+
+        const targetMsgId = selectedMsg as number;
+        const msg = userMessages.find((m) => m.id === targetMsgId);
+        const msgPreview = msg ? msg.rawText.slice(0, 150) + (msg.rawText.length > 150 ? "…" : "") : "";
+
+        log.info(pc.dim("Selected message content:"));
+        log.info(pc.dim("  " + msgPreview.replace(/\n/g, "\n  ")));
+
+        // Count what will be removed
+        const msgIndex = userMessages.findIndex((m) => m.id === targetMsgId);
+        const msgsToRemove = userMessages.length - msgIndex;
+        const remainingMsgs = msgIndex; // messages before the selected one
+
+        log.warn(pc.red(`⚠ This will delete ${pc.bold(String(msgsToRemove))} user message(s) (and corresponding assistant replies) from the session.`));
+        log.info(pc.dim(`  ${remainingMsgs} message(s) will remain. This CANNOT be undone.`));
+
+        // Store target message ID for the confirm step
+        // We'll stash it in modelValue temporarily (it won't be used in edit mode)
+        const storedTargetId = targetMsgId;
+
+        const confirmRollback = await confirm({
+          message: pc.red("Delete these messages? This CANNOT be undone!"),
+          initialValue: false,
+        });
+
+        if (isCancel(confirmRollback) || !confirmRollback) {
+          step = "edit_message";
+          continue;
+        }
+
+        // ─── Execute rollback ──────────────────────────────────────
+        const s2 = spinner();
+        s2.start("Rolling back session...");
+
+        const success = rollbackSession(sessionName, storedTargetId);
+
+        if (!success) {
+          s2.stop(pc.red("✖ Rollback failed!"));
+          log.error(pc.red("Failed to rollback session. See error above."));
+          const retry = await confirm({ message: "Try again?", initialValue: true });
+          step = isCancel(retry) || !retry ? "edit_session" : "edit_message";
+          continue;
+        }
+
+        s2.stop(pc.green(`✓ Rolled back!`));
+        log.success(pc.green(`✓ Removed ${String(msgsToRemove)} user message(s) from session "${sessionDisplayName || sessionName}"`));
+        log.info(pc.dim(`  ${remainingMsgs} user message(s) remain.`));
+        log.info(pc.dim(`  Session ID and name unchanged.`));
+
+        // ─── Ask: launch or exit ────────────────────────────────────
+        const displayName = sessionDisplayName || sessionName.slice(0, 8) + "…";
+        outro(
+          `${pc.green("✓")} Session edited:
+  ${pc.bold("Session")}:  ${pc.cyan(displayName)}
+  ${pc.bold("Provider")}: ${pc.yellow(selectedProviderName)}
+  ${pc.bold("Model")}:    ${pc.magenta(modelValue)}`,
+        );
+
+        const shouldLaunch = await confirm({
+          message: `Launch edited session now? ${pc.dim("(Esc ← exit)")}`,
+          initialValue: true,
+        });
+
+        if (isCancel(shouldLaunch) || !shouldLaunch) {
+          outro(pc.yellow(`Session rolled back. Run 'cgoose s' to resume it.`));
+          process.exit(0);
+        }
+
+        // Launch with existing provider/model
+        const allProvidersCombined = [...configProviders, ...discoveredProviders];
+        const editProvider = allProvidersCombined.find((p) => p.name === selectedProviderName)
+          || (selectedProviderName === "ollama" ? { name: "ollama", model: modelValue, engine: "ollama" } as any : null);
+
+        if (!editProvider) {
+          log.warn(pc.yellow("Could not determine provider. Switching to normal flow."));
+          step = "provider";
+          continue;
+        }
+
+        launchGoose(sessionName, editProvider, modelValue, false, sessionDisplayName);
+        return;
       }
 
       // ─── STEP 5: Summary & Launch ───────────────────────────────────────
