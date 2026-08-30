@@ -143,6 +143,8 @@ export function launchGoose(
     spawnOpts.cwd = worktreePath;
   }
 
-  const child = spawn("goose", args, spawnOpts as any);
-  child.on("exit", (code) => process.exit(code ?? 0));
+  return new Promise<number | null>((resolve) => {
+    const child = spawn("goose", args, spawnOpts as any);
+    child.on("exit", (code) => resolve(code));
+  });
 }

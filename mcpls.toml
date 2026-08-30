@@ -1,0 +1,6 @@
+[[lsp_servers]]
+language_id = "typescript"
+command = "node_modules/.bin/typescript-language-server"
+args = ["--stdio"]
+file_patterns = ["src/**/*.ts"]
+initialization_options = { tsserver = { path = "node_modules/.bin/tsserver" } }
