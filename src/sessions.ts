@@ -39,13 +39,22 @@ export function getAllSessions(): GooseSession[] {
 
 // ─── Delete session ──────────────────────────────────────────────────────────
 
-/** Delete a session by ID via `goose session remove`, returns true on success */
+/** Delete a session by ID from SQLite db, returns true on success */
 export function deleteSessionById(sessionId: string): boolean {
   try {
-    execSync(`goose session remove --session-id "${sessionId}"`, {
+    const escapedId = sessionId.replace(/'/g, "''");
+    const sql = [
+      "BEGIN;",
+      `DELETE FROM messages WHERE session_id = '${escapedId}';`,
+      `DELETE FROM usage_ledger WHERE session_id = '${escapedId}';`,
+      `DELETE FROM sessions WHERE id = '${escapedId}';`,
+      "COMMIT;",
+    ].join("\n");
+    execSync(`sqlite3 "${SESSIONS_DB}"`, {
+      input: sql,
       encoding: "utf-8",
-      timeout: 15_000,
-      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
     });
     return true;
   } catch {
