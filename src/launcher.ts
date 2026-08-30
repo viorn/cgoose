@@ -15,6 +15,7 @@ import pc from "picocolors";
 import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
+import { readCgooseConfig } from "./cgoose-config";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
 
@@ -32,6 +33,14 @@ export function launchGoose(
   // ─── Git worktree setup ────────────────────────────────────────────────
   let worktreePath: string | null = null;
   const forceWorktree = process.env.CGOOSE_FORCE_WORKTREE === "1";
+
+  // Check cgoose config for default mode if no env var is explicitly set
+  if (!forceWorktree && process.env.CGOOSE_NO_WORKTREE === undefined) {
+    const cgooseConfig = readCgooseConfig();
+    if (cgooseConfig.default_mode === "no-worktree") {
+      process.env.CGOOSE_NO_WORKTREE = "1";
+    }
+  }
   const noWorktree = forceWorktree ? false : process.env.CGOOSE_NO_WORKTREE === "1";
 
   // Use the display name for worktree (stable across creates and resumes)

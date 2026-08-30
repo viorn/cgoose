@@ -30,6 +30,7 @@ import {
 import pc from "picocolors";
 
 import { getCurrentDirName, generateSessionName } from "./utils";
+import { readCgooseConfig } from "./cgoose-config";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
 import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
@@ -206,9 +207,18 @@ async function main() {
   const isEditMode = args.includes("e") || args.includes("me") || args.includes("we");
 
   // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
-  const noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
+  let noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
   if (noWorktree) {
     process.env.CGOOSE_NO_WORKTREE = "1";
+  }
+
+  // If no explicit CLI override, check cgoose config for default mode
+  if (!forceWorktree && !noWorktree) {
+    const cgooseConfig = readCgooseConfig();
+    if (cgooseConfig.default_mode === "no-worktree") {
+      process.env.CGOOSE_NO_WORKTREE = "1";
+      noWorktree = true;
+    }
   }
 
   // Resolve mode: shortcuts like w*/m* are composed, plain "w" / "m" falls back to full
