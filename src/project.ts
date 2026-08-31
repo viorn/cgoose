@@ -19,6 +19,10 @@ export interface ProjectMeta {
   modelHistory: Record<string, string[]>;
   /** History of providers used in this project (first = last used) */
   providerHistory: string[];
+  /** Last selected recipe name (empty string = no recipe) */
+  recipe: string;
+  /** History of recipes used in this project (first = last used) */
+  recipeHistory: string[];
   /** Maps session name → worktree path (created via cgoose git worktree integration) */
   worktrees?: Record<string, string>;
 }
@@ -53,16 +57,23 @@ export function readProjectMeta(): ProjectMeta | null {
     } else if (!raw.providerHistory) {
       raw.providerHistory = [];
     }
+    // Migrate: ensure recipe fields exist
+    if (!raw.recipe) raw.recipe = "";
+    if (!raw.recipeHistory) raw.recipeHistory = [];
     return raw as ProjectMeta;
   } catch { return null; }
 }
 
-export function writeProjectMeta(provider: string, model: string): void {
+/**
+ * Save provider + model + recipe selection to project meta.
+ * If called without recipe, preserves the existing recipe value.
+ */
+export function writeProjectMeta(provider: string, model: string, recipe?: string): void {
   const dir = CGOOSE_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = getProjectMetaPath();
 
-  // Merge with existing meta to preserve model history
+  // Merge with existing meta to preserve history
   const existing = existsSync(path)
     ? (() => { try { return JSON.parse(readFileSync(path, "utf-8")) as ProjectMeta; } catch { return null; } })()
     : null;
@@ -76,6 +87,17 @@ export function writeProjectMeta(provider: string, model: string): void {
   const filteredProvHistory = providerHistory.filter((p) => p !== provider);
   const newProviderHistory = [provider, ...filteredProvHistory].slice(0, 10);
 
+  // Track recipe history (most recent first, max 10)
+  const effectiveRecipe = recipe !== undefined ? recipe : (existing?.recipe ?? "");
+  const recipeHistory = existing?.recipeHistory ?? [];
+  let newRecipeHistory: string[];
+  if (effectiveRecipe) {
+    const filteredRecipeHistory = recipeHistory.filter((r) => r !== effectiveRecipe);
+    newRecipeHistory = [effectiveRecipe, ...filteredRecipeHistory].slice(0, 10);
+  } else {
+    newRecipeHistory = recipeHistory;
+  }
+
   // Preserve existing worktree mappings when merging
   const worktrees = existing?.worktrees ?? {};
   
@@ -83,6 +105,8 @@ export function writeProjectMeta(provider: string, model: string): void {
     provider,
     modelHistory,
     providerHistory: newProviderHistory,
+    recipe: effectiveRecipe,
+    recipeHistory: newRecipeHistory,
     worktrees,
   }, null, 2) + "\n");
 }

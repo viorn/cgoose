@@ -114,12 +114,21 @@ bun start
 - Sets `GOOSE_ADDITIONAL_CONFIG_FILES` env var so Goose includes it alongside the main config
 - **Secrets resolution** — any `${VARIABLE}` or `$VARIABLE` references found in `.goose/config.yaml` values are resolved from Goose secrets (system keyring,`~/.config/goose/secrets.yaml`) and injected into the session environment
 
+### Recipe & Agent Mode
+- **Recipe integration** — after naming a session, cgoose shows a recipe picker if any recipes are installed
+- **Last used recipe** always at the very top (`❶`), then Default, then history + alphabetically
+- **`initialValue`** on all pickers — last recipe, last provider, last model are pre-selected
+- **Enter through all steps** = identical config to the last launched session
+- Selected recipe launches via `goose run --recipe <name> --interactive` instead of `goose session`
+- Recipe history tracked per-project (most recent first, up to 10)
+
 ### Launch
 - Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
 - Sets `GOOSE_CONTEXT_LIMIT` from the provider's JSON model config
 - Resumes existing sessions with `--resume --history`
-- Spawns `goose session` with `stdio: inherit`, forwards exit code
+- Shows recipe in launch summary if one was selected
+- Spawns `goose session` (or `goose run --recipe`) with `stdio: inherit`, forwards exit code
 
 ---
 
@@ -127,10 +136,13 @@ bun start
 
 1. **Choose a session** — pick from existing sessions for this directory, create new, or delete
 2. **Name the session** — enter a custom name or leave empty for auto-name from first message
-3. **Pick a provider** — sorted by your history, shows Ollama if running locally
-4. **Pick a model** — last used, history, fetch from API, or type manually
-5. **Context limit** (if new model for custom provider) — enter tokens or accept default
-6. **Launch** — summary screen → `goose session` starts in the same terminal
+3. **Pick a recipe** (if any recipes installed) — last used recipe at the very top (`❶`), then Default, then history + alphabetically
+4. **Pick a provider** — sorted by your history, shows Ollama if running locally
+5. **Pick a model** — last used, history, fetch from API, or type manually
+6. **Context limit** (if new model for custom provider) — enter tokens or accept default
+7. **Launch** — summary screen → `goose session` (or `goose run --recipe`) starts in the same terminal
+
+**Pressing Enter on every step** creates a new session with the same recipe, provider, and model as the last one — no navigation needed.
 
 Pressing **Esc** at any step goes back one step (not abort).
 
@@ -168,11 +180,13 @@ Run cgoose with a single-letter mode (like tmux):
 | `ws` | Sessions only + force worktree |
 | `wn` | New session + force worktree |
 
+When using `a`, `n`, or `s` modes, the last used **recipe** is also restored alongside provider and model.
+
 If there's no project history for the current directory, the flag is ignored and the full workflow runs.
 
 ```bash
-cgoose a    # resume last session
-cgoose n    # new session with last provider/model
+cgoose a    # resume last session (with last recipe, provider, model)
+cgoose n    # new session with last recipe/provider/model
 cgoose s    # pick a session, then launch
 cgoose m    # full workflow, no worktree
 cgoose w    # full workflow, force worktree

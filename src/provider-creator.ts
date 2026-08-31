@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { select, text, password, confirm, log, spinner, isCancel, outro } from "@clack/prompts";
 import pc from "picocolors";
+import { load as yamlLoad, dump as yamlDump } from "js-yaml";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
@@ -47,101 +48,52 @@ function readYamlContent(): string | null {
 }
 
 /**
- * Determine the last indentation used in the providers: block so we can
- * append new entries with consistent formatting.
- */
-function getProvidersIndent(yamlContent: string): string {
-  const lines = yamlContent.split("\n");
-  let inProviders = false;
-  for (const line of lines) {
-    if (line.trimStart().startsWith("providers:")) {
-      inProviders = true;
-      continue;
-    }
-    if (!inProviders) continue;
-    if (line.trim().startsWith("- ")) {
-      // Found a provider entry — return its indentation (leading spaces)
-      const indent = line.match(/^(\s*)/)?.[1] ?? "  ";
-      return indent;
-    }
-    // If we hit a non-provider line that's not a comment, stop
-    if (line.trim() && !line.trimStart().startsWith("#")) {
-      inProviders = false;
-    }
-  }
-  return "  "; // default: 2 spaces
-}
-
-/**
  * Try to add the provider to config.yaml so it shows up in Goose.
  * Returns true on success, false if user skipped or it failed.
  */
 function addToConfigYaml(providerId: string, model: string): boolean {
   try {
-    let content = readYamlContent();
+    const content = readYamlContent();
+
     if (content === null) {
-      // No config.yaml exists — create one
-      const modelLine2 = model ? `\n    model: ${model}` : "";
-      content = `providers:\n  ${providerId}:\n    enabled: true${modelLine2}\n`;
+      // No config.yaml exists — create one from scratch
+      const doc: Record<string, any> = {
+        providers: {
+          [providerId]: { enabled: true },
+        },
+      };
+      if (model) {
+        doc.providers[providerId].model = model;
+      }
       mkdirSync(join(homedir(), ".config", "goose"), { recursive: true });
-      writeFileSync(CONFIG_PATH, content, "utf-8");
+      writeFileSync(CONFIG_PATH, yamlDump(doc, { indent: 2, lineWidth: -1, noRefs: true }), "utf-8");
       return true;
     }
 
-    // Check if provider already exists in YAML
-    if (content.includes(`\n${providerId}:`) || content.includes(` ${providerId}:`) || content.includes(`\t${providerId}:`)) {
-      return true; // already there
+    // Parse existing YAML
+    const doc = yamlLoad(content) as Record<string, any>;
+    if (!doc || typeof doc !== "object") return false;
+
+    // Ensure providers block exists
+    if (typeof doc.providers !== "object" || doc.providers === null) {
+      doc.providers = {};
     }
 
-    const indent = getProvidersIndent(content);
+    // Check if provider already exists
+    if (doc.providers[providerId]) return true;
 
-    // Find where to insert: after the last provider entry, before any non-provider top-level key
-    const lines = content.split("\n");
-    let lastProviderLine = -1;
-    let providersEnd = -1;
-    let inProviders = false;
-
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trimStart();
-      if (trimmed === "providers:" || trimmed.startsWith("providers:")) {
-        inProviders = true;
-        continue;
-      }
-      if (!inProviders) continue;
-      if (trimmed.startsWith("- ") || trimmed.startsWith("#") || trimmed === "") {
-        if (trimmed.startsWith("- ")) lastProviderLine = i;
-        continue;
-      }
-      // Hit a non-provider, non-comment, non-empty line while inProviders
-      providersEnd = i;
-      break;
+    // Add new provider
+    doc.providers[providerId] = { enabled: true };
+    if (model) {
+      doc.providers[providerId].model = model;
     }
 
-    if (providersEnd === -1) providersEnd = lines.length;
-
-    // Insert after last provider, or after "providers:" line
-    const insertAt = lastProviderLine >= 0 ? lastProviderLine + 1 : getProvidersLine(content) + 1;
-    const modelLine = model ? `\n${indent}  model: ${model}` : "";
-    const newEntry = `${indent}${providerId}:\n${indent}  enabled: true${modelLine}`;
-
-    lines.splice(insertAt, 0, newEntry);
-    writeFileSync(CONFIG_PATH, lines.join("\n"), "utf-8");
+    writeFileSync(CONFIG_PATH, yamlDump(doc, { indent: 2, lineWidth: -1, noRefs: true }), "utf-8");
     return true;
   } catch (e) {
     log.error(pc.red(`Failed to update config.yaml: ${e}`));
     return false;
   }
-}
-
-/** Find the line index of the "providers:" key */
-function getProvidersLine(yamlContent: string): number {
-  const lines = yamlContent.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trimStart() === "providers:" || lines[i].trimStart().startsWith("providers:")) {
-      return i;
-    }
-  }
-  return -1;
 }
 
 // ─── Main wizard ─────────────────────────────────────────────────────────────

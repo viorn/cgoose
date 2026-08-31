@@ -27,8 +27,11 @@ export function launchGoose(
   /** Session's original name (from db), for worktree lookup on resume.
    *  On resume, sessionName is the UUID; this is the human-readable name. */
   sessionDisplayName?: string,
+  /** Optional recipe name to use for this session.
+   *  If provided, goose run --recipe is used instead of goose session. */
+  recipe?: string,
 ): void {
-  writeProjectMeta(providerInfo.name, model);
+  writeProjectMeta(providerInfo.name, model, recipe);
 
   // ─── Git worktree setup ────────────────────────────────────────────────
   let worktreePath: string | null = null;
@@ -127,20 +130,37 @@ export function launchGoose(
   }
 
   // ─── Build args ─────────────────────────────────────────────────────────
-  const args = ["session"];
-  if (!isNew) {
-    args.push("--resume", "--history");
+  let args: string[];
+  if (recipe) {
+    // Recipe-based session: use goose run with --recipe and --interactive.
+    // goose session doesn't support --recipe, so we use goose run instead.
+    args = ["run", "--recipe", recipe];
+    if (!isNew) {
+      args.push("--resume");
+    }
+    if (sessionName) {
+      args.push("--name", sessionName);
+    }
+    args.push("--provider", effectiveProvider, "--model", model);
+    args.push("--interactive"); // Continue interactively after recipe instructions
+  } else {
+    // Standard session
+    args = ["session"];
+    if (!isNew) {
+      args.push("--resume", "--history");
+    }
+    if (sessionName) {
+      args.push("--name", sessionName);
+    }
+    args.push("--provider", effectiveProvider, "--model", model);
   }
-  if (sessionName) {
-    args.push("--name", sessionName);
-  }
-  args.push("--provider", effectiveProvider, "--model", model);
 
+  const recipeLine = recipe ? `\n  ${pc.dim("Recipe:")}  ${pc.green(recipe)}` : "";
   console.log(
     `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
   ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
   ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}
-  ${pc.dim("Model:")}    ${pc.magenta(model)}
+  ${pc.dim("Model:")}    ${pc.magenta(model)}${recipeLine}
   ${worktreePath ? `${pc.dim("Workdir:")}  ${pc.cyan(worktreePath)}\n` : ""}
   ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}
   `,

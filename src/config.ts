@@ -7,6 +7,7 @@ import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import process from "node:process";
+import { load as yamlLoad } from "js-yaml";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
@@ -27,39 +28,21 @@ export interface ProviderInfo {
 // ─── Config parsing ──────────────────────────────────────────────────────────
 
 function parseYamlProviders(raw: string): ProviderInfo[] {
-  const lines = raw.split("\n");
-  const providers: ProviderInfo[] = [];
-  let inProviders = false, currentName = "", currentEnabled = false;
+  try {
+    const doc = yamlLoad(raw) as Record<string, any>;
+    if (!doc?.providers || typeof doc.providers !== "object") return [];
 
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-    if (line.startsWith("providers:")) { inProviders = true; continue; }
-    if (!inProviders) continue;
-    if (!line.startsWith(" ") && !line.startsWith("\t") && line.length > 0 && !line.startsWith("#")) {
-      const colonIdx = line.indexOf(":");
-      if (colonIdx > 0) {
-        const key = line.slice(0, colonIdx);
-        if (key.trim().length > 0 && !key.trim().startsWith("-")) break;
+    const providers: ProviderInfo[] = [];
+    for (const [name, config] of Object.entries(doc.providers)) {
+      const cfg = config as any;
+      if (cfg && cfg.enabled === true && cfg.model) {
+        providers.push({ name, model: cfg.model });
       }
     }
-    const trimmed = line.trim();
-    if (trimmed.endsWith(":") && !trimmed.startsWith("-") && trimmed.length > 1) {
-      currentName = trimmed.slice(0, -1);
-      currentEnabled = false;
-      continue;
-    }
-    if (trimmed.startsWith("enabled:")) {
-      currentEnabled = trimmed.split("enabled:")[1]?.trim() === "true";
-      continue;
-    }
-    if (trimmed.startsWith("model:") && currentName && currentEnabled) {
-      const model = trimmed.split("model:")[1]?.trim();
-      if (model) providers.push({ name: currentName, model });
-      currentName = "";
-      currentEnabled = false;
-    }
+    return providers;
+  } catch {
+    return [];
   }
-  return providers;
 }
 
 /**
@@ -320,18 +303,21 @@ export function getModelContextLimit(providerName: string, modelName: string): n
 /** Set top-level env vars from config.yaml on process.env so child processes inherit them */
 export function loadConfigEnvVars(): void {
   if (!existsSync(CONFIG_PATH)) return;
-  for (const line of readFileSync(CONFIG_PATH, "utf-8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || line[0] === " " || line[0] === "\t") continue;
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = trimmed.slice(0, colonIdx).trim();
-    const rawVal = trimmed.slice(colonIdx + 1).trim();
-    if (!key || !rawVal || process.env[key]) continue;
-    let val = rawVal;
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
+  try {
+    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    const doc = yamlLoad(raw) as Record<string, any>;
+    if (!doc || typeof doc !== "object") return;
+
+    for (const [key, val] of Object.entries(doc)) {
+      if (key === "providers") continue;
+      // Only set primitive values (strings, numbers, booleans), not objects/arrays
+      if (val !== null && val !== undefined && !(key in process.env)) {
+        if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+          process.env[key] = String(val);
+        }
+      }
     }
-    process.env[key] = val;
+  } catch {
+    // ignore parse errors
   }
 }

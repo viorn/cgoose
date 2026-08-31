@@ -36,12 +36,13 @@ import { createCustomProviderWizard, type CreatedProvider } from "./provider-cre
 import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
+import { discoverRecipes, type RecipeInfo } from "./recipes";
 import { launchGoose } from "./launcher";
 import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Step = "session" | "session_name" | "provider" | "model" | "launch";
+type Step = "session" | "session_name" | "recipe" | "provider" | "model" | "launch";
 
 // ─── Session deletion dialog ─────────────────────────────────────────────────
 
@@ -184,6 +185,9 @@ async function main() {
     process.exit(1);
   }
 
+  // ─── Discover recipes ──────────────────────────────────────────────────
+  const allRecipes = discoverRecipes();
+
   // ─── State shared across steps ───────────────────────────────────────────
   let step: Step = "session";
   let sessionName = "";
@@ -191,6 +195,7 @@ async function main() {
   let isNewSession = false;
   let selectedProviderName = "";
   let modelValue = "";
+  let selectedRecipe = "";
   let lastAllSessions: GooseSession[] = [];
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
@@ -250,6 +255,7 @@ async function main() {
     if (meta) {
       selectedProviderName = meta.provider;
       modelValue = meta.modelHistory[meta.provider]?.[0] ?? "";
+      selectedRecipe = meta.recipe ?? "";
     }
   }
 
@@ -409,12 +415,89 @@ async function main() {
         if (mode === "session-only" && selectedProviderName) {
           step = "launch";
         } else {
-          step = "provider";
+          step = allRecipes.length > 0 ? "recipe" : "provider";
         }
         continue;
       }
 
-      // ─── STEP 3: Provider selection ─────────────────────────────────────
+      // ─── STEP 3: Recipe selection ───────────────────────────────────────
+      case "recipe": {
+        const lastMeta = readProjectMeta();
+        const lastRecipe = lastMeta?.recipe ?? "";
+        const recipeHistory = lastMeta?.recipeHistory ?? [];
+
+        const recipeOptions: { label: string; value: string; hint?: string }[] = [];
+
+        // 1) Last-used recipe — always at the very top (if exists and available)
+        const lastRecipeObj = lastRecipe ? allRecipes.find((r) => r.name === lastRecipe) : undefined;
+        if (lastRecipeObj) {
+          recipeOptions.push({
+            label: `${lastRecipeObj.title} ${pc.dim("←")}  ${pc.green("❶")}`,
+            value: lastRecipeObj.name,
+            hint: (lastRecipeObj.description || lastRecipeObj.name) + ` ${pc.dim("← last used")}`,
+          });
+        }
+
+        // 2) "Default (no recipe)" option
+        recipeOptions.push({
+          label: !lastRecipeObj && lastRecipe === ""
+            ? pc.green("✦ Default (no recipe)") + ` ${pc.dim("←")}`
+            : "Default (no recipe)",
+          value: "",
+          hint: pc.dim("standard agent session"),
+        });
+
+        // 3) Remaining recipes sorted by history then alphabetical (exclude lastRecipeObj's recipe)
+        const sortedRecipes = [...allRecipes]
+          .filter((r) => !lastRecipeObj || r.name !== lastRecipeObj.name)
+          .sort((a, b) => {
+            const aIdx = recipeHistory.indexOf(a.name);
+            const bIdx = recipeHistory.indexOf(b.name);
+            if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+            if (aIdx !== -1) return -1;
+            if (bIdx !== -1) return 1;
+            return a.name.localeCompare(b.name);
+          });
+
+        for (const r of sortedRecipes) {
+          let label = r.title;
+          const hint = r.description || r.name;
+          let extra = "";
+
+          if (recipeHistory.includes(r.name)) {
+            extra = ` ${pc.dim("(history)")}`;
+          }
+
+          recipeOptions.push({
+            label,
+            value: r.name,
+            hint: hint + extra,
+          });
+        }
+
+        const selected = await autocomplete({
+          message: `Recipe: ${pc.dim("(Esc ← back to session name)")}`,
+          placeholder: "Type to filter recipes... (default = no recipe)",
+          options: recipeOptions,
+          maxItems: 10,
+          initialValue: lastRecipe || "",
+          filter: (search, opt) => {
+            const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
+            return haystack.includes(search.toLowerCase());
+          },
+        });
+
+        if (isCancel(selected)) {
+          step = "session_name"; // back to session name
+          continue;
+        }
+
+        selectedRecipe = selected as string;
+        step = "provider";
+        continue;
+      }
+
+      // ─── STEP 4: Provider selection ─────────────────────────────────────
       case "provider": {
         const lastMeta = readProjectMeta();
         const lastProviderRaw = lastMeta?.provider ?? null;
@@ -498,10 +581,11 @@ async function main() {
         });
 
         const selected = await autocomplete({
-          message: `Provider: ${pc.dim("(Esc ← back to sessions)")}`,
+          message: `Provider: ${pc.dim("(Esc ← back to recipe)")}`,
           placeholder: "Type to filter providers...",
           options: providerOptions,
           maxItems: 10,
+          initialValue: lastProviderRaw ?? undefined,
           filter: (search, opt) => {
             const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
             return haystack.includes(search.toLowerCase());
@@ -509,7 +593,7 @@ async function main() {
         });
 
         if (isCancel(selected)) {
-          step = "session"; // back to session list
+          step = allRecipes.length > 0 ? "recipe" : "session_name"; // back to recipe or session name
           continue;
         }
 
@@ -559,6 +643,7 @@ async function main() {
             placeholder: `Type to filter ${ollamaModels!.length} models...`,
             options: modelOptions,
             maxItems: 15,
+            initialValue: lastModel ?? undefined,
             filter: (search, opt) => {
               if (!search) return true;
               return opt.value.toLowerCase().includes(search.toLowerCase());
@@ -659,6 +744,7 @@ async function main() {
           placeholder: "Type to search or select an option...",
           options: modelOptions,
           maxItems: 12,
+          initialValue: defaultModel || undefined,
           filter: (search, opt) => {
             const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
             return haystack.includes(search.toLowerCase());
@@ -805,11 +891,18 @@ async function main() {
         const displayProvider = selectedProviderName === "ollama"
           ? "🦙 Ollama (local)"
           : selectedProviderName;
+        const recipeObj = allRecipes.find((r) => r.name === selectedRecipe);
+        const displayRecipe = selectedRecipe
+          ? (recipeObj?.title ?? selectedRecipe)
+          : pc.dim("none");
+        const recipeLine = selectedRecipe
+          ? `\n  ${pc.bold("Recipe")}:   ${pc.cyan(displayRecipe)}`
+          : "";
         outro(
           `${pc.green("✓")} Configuration complete:
   ${pc.bold("Session")}:  ${pc.cyan(displayName)}
   ${pc.bold("Provider")}: ${pc.yellow(displayProvider)}
-  ${pc.bold("Model")}:    ${pc.magenta(modelValue)}`,
+  ${pc.bold("Model")}:    ${pc.magenta(modelValue)}${recipeLine}`,
         );
 
         const shouldLaunch = await confirm({ message: `Launch Goose now? ${pc.dim("(Esc ← back to sessions)")}`, initialValue: true });
@@ -819,7 +912,7 @@ async function main() {
           continue;
         }
 
-        launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName);
+        launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName, selectedRecipe);
         return; // never reached — launchGoose replaces process
       }
     }
