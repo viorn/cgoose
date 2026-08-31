@@ -253,9 +253,9 @@ async function main() {
   if (mode === "auto" || mode === "new" || mode === "session-only") {
     const meta = readProjectMeta();
     if (meta) {
-      selectedProviderName = meta.provider;
-      modelValue = meta.modelHistory[meta.provider]?.[0] ?? "";
-      selectedRecipe = meta.recipe ?? "";
+      selectedProviderName = meta.providerHistory?.[0] ?? "";
+      modelValue = meta.modelHistory[meta.providerHistory?.[0] ?? ""]?.[0] ?? "";
+      selectedRecipe = meta.recipeHistory?.[0] ?? "";
     }
   }
 
@@ -386,6 +386,12 @@ async function main() {
         if (mode === "session-only" && selectedProviderName) {
           step = "launch";
         } else {
+          // Resuming in full mode: the recipe step is skipped, so restore the
+          // project's recipe from memory. Otherwise selectedRecipe stays "" and
+          // the resume would silently overwrite the project's recipe with "".
+          if (mode === "full") {
+            selectedRecipe = readProjectMeta()?.recipeHistory?.[0] ?? selectedRecipe;
+          }
           step = "provider";
         }
         continue;
@@ -423,7 +429,9 @@ async function main() {
       // ─── STEP 3: Recipe selection ───────────────────────────────────────
       case "recipe": {
         const lastMeta = readProjectMeta();
-        const lastRecipe = lastMeta?.recipe ?? "";
+        // Last selection wins: it can be a recipe OR "" (no recipe).
+        // The first history entry is the project's default until changed.
+        const lastRecipe = lastMeta?.recipeHistory?.[0] ?? "";
         const recipeHistory = lastMeta?.recipeHistory ?? [];
 
         const recipeOptions: { label: string; value: string; hint?: string }[] = [];
@@ -500,7 +508,7 @@ async function main() {
       // ─── STEP 4: Provider selection ─────────────────────────────────────
       case "provider": {
         const lastMeta = readProjectMeta();
-        const lastProviderRaw = lastMeta?.provider ?? null;
+        const lastProviderRaw = lastMeta?.providerHistory?.[0] ?? null;
         const sessionObj = lastAllSessions.find((s) => s.id === sessionName);
         const sessionProvider = sessionObj?.provider_name ?? null;
 
@@ -628,7 +636,7 @@ async function main() {
         // ── Ollama: show models directly from detection ──────────────────
         if (selectedProviderName === "ollama") {
           const lastMeta = readProjectMeta();
-          const lastModel = lastMeta?.provider === "ollama" ? (lastMeta.modelHistory.ollama?.[0] ?? null) : null;
+          const lastModel = lastMeta?.providerHistory?.[0] === "ollama" ? (lastMeta.modelHistory.ollama?.[0] ?? null) : null;
 
           const modelOptions = ollamaModels!.map((m) => ({
             label: m.name === lastModel
@@ -679,7 +687,7 @@ async function main() {
 
         const lastMeta = readProjectMeta();
         const providerCfg = allProviders.find((p) => p.name === selectedProviderName)!;
-        const defaultModel = lastMeta?.provider === selectedProviderName
+        const defaultModel = lastMeta?.providerHistory?.[0] === selectedProviderName
           ? (lastMeta.modelHistory[selectedProviderName]?.[0] ?? "")
           : providerCfg?.model ?? "";
 

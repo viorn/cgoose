@@ -14,14 +14,11 @@ const CGOOSE_PROJECTS_DIR = join(homedir(), ".config", "cgoose", "projects");
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface ProjectMeta {
-  provider: string;
   /** History of models used per provider (first = last used) */
   modelHistory: Record<string, string[]>;
   /** History of providers used in this project (first = last used) */
   providerHistory: string[];
-  /** Last selected recipe name (empty string = no recipe) */
-  recipe: string;
-  /** History of recipes used in this project (first = last used) */
+  /** History of recipes used in this project (first = last used; "" = no recipe) */
   recipeHistory: string[];
   /** Maps session name → worktree path (created via cgoose git worktree integration) */
   worktrees?: Record<string, string>;
@@ -57,16 +54,21 @@ export function readProjectMeta(): ProjectMeta | null {
     } else if (!raw.providerHistory) {
       raw.providerHistory = [];
     }
-    // Migrate: ensure recipe fields exist
-    if (!raw.recipe) raw.recipe = "";
-    if (!raw.recipeHistory) raw.recipeHistory = [];
+    // Migrate: ensure recipe history exists.
+    // The first entry is the project's default (last choice), so seed it from
+    // the old standalone `recipe` field if present ("" = no recipe).
+    if (!raw.recipeHistory) {
+      raw.recipeHistory = raw.recipe ? [raw.recipe] : [];
+    }
     return raw as ProjectMeta;
   } catch { return null; }
 }
 
 /**
  * Save provider + model + recipe selection to project meta.
- * If called without recipe, preserves the existing recipe value.
+ * recipe === "" means "no recipe": it becomes the first recipeHistory entry, so
+ * the next new session defaults to no recipe too until a recipe is chosen again.
+ * Memory is per-project, not per-session.
  */
 export function writeProjectMeta(provider: string, model: string, recipe?: string): void {
   const dir = CGOOSE_PROJECTS_DIR;
@@ -87,25 +89,20 @@ export function writeProjectMeta(provider: string, model: string, recipe?: strin
   const filteredProvHistory = providerHistory.filter((p) => p !== provider);
   const newProviderHistory = [provider, ...filteredProvHistory].slice(0, 10);
 
-  // Track recipe history (most recent first, max 10)
-  const effectiveRecipe = recipe !== undefined ? recipe : (existing?.recipe ?? "");
+  // Track recipe history (most recent first, max 10).
+  // "" (no recipe) is a legitimate choice and is recorded too, so the history
+  // reflects the full sequence of selections, not just recipe usage.
+  const effectiveRecipe = recipe !== undefined ? recipe : (existing?.recipeHistory?.[0] ?? "");
   const recipeHistory = existing?.recipeHistory ?? [];
-  let newRecipeHistory: string[];
-  if (effectiveRecipe) {
-    const filteredRecipeHistory = recipeHistory.filter((r) => r !== effectiveRecipe);
-    newRecipeHistory = [effectiveRecipe, ...filteredRecipeHistory].slice(0, 10);
-  } else {
-    newRecipeHistory = recipeHistory;
-  }
+  const filteredRecipeHistory = recipeHistory.filter((r) => r !== effectiveRecipe);
+  const newRecipeHistory = [effectiveRecipe, ...filteredRecipeHistory].slice(0, 10);
 
   // Preserve existing worktree mappings when merging
   const worktrees = existing?.worktrees ?? {};
   
   writeFileSync(path, JSON.stringify({
-    provider,
     modelHistory,
     providerHistory: newProviderHistory,
-    recipe: effectiveRecipe,
     recipeHistory: newRecipeHistory,
     worktrees,
   }, null, 2) + "\n");
