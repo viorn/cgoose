@@ -18,6 +18,7 @@ import type { ProviderInfo } from "./config";
 import { readCgooseConfig } from "./cgoose-config";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
+import { getSessionRecipeInstructions } from "./sessions";
 
 export function launchGoose(
   sessionName: string,
@@ -142,8 +143,16 @@ export function launchGoose(
     }
     args.push("--provider", effectiveProvider, "--model", model);
   } else {
-    // Resume: use goose session --resume --history (recipe already in history)
+    // Resume: use goose session --resume --history
     args = ["session", "--resume", "--history"];
+
+    // Re-apply recipe instructions from stored session recipe_json
+    // (Goose doesn't do this automatically on session resume)
+    const storedInstructions = sessionName ? getSessionRecipeInstructions(sessionName) : null;
+    if (storedInstructions) {
+      args.push("--system", storedInstructions);
+    }
+
     if (sessionName) {
       args.push("--name", sessionName);
     }

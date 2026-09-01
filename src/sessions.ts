@@ -62,6 +62,29 @@ export function deleteSessionById(sessionId: string): boolean {
   }
 }
 
+// ─── Read recipe from session ────────────────────────────────────────────────
+
+/** Read the recipe instructions stored in a session's recipe_json.
+ *  Returns null if the session has no recipe or no instructions. */
+export function getSessionRecipeInstructions(sessionId: string): string | null {
+  try {
+    const escapedId = sessionId.replace(/'/g, "''");
+    const sql = `SELECT recipe_json FROM sessions WHERE id = '${escapedId}';\n`;
+    const output = execSync(`sqlite3 "${SESSIONS_DB}"`, {
+      input: sql,
+      encoding: "utf-8",
+      timeout: 5_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const trimmed = output.trim();
+    if (!trimmed) return null;
+    const recipe = JSON.parse(trimmed);
+    return recipe.instructions ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Format for display ──────────────────────────────────────────────────────
 
 /** Format a session for display */
