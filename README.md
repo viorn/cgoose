@@ -106,8 +106,8 @@ bun start
 - **Isolation** — worktrees let you run Goose in a separate working tree without touching your main branches
 - **Cleanup** — deleting a session through cgoose also removes the worktree and branch
 - **Smart recovery** — detects stale worktree registrations and prunes them automatically
-- Skipped if not in a git repo or `CGOOSE_NO_WORKTREE=1` is set
-- Force with `CGOOSE_FORCE_WORKTREE=1` or the `w` CLI flag (overrides `CGOOSE_NO_WORKTREE=1`)
+- Skipped if not in a git repo or `CGOOSE_NO_WORKTREE=1` is set (default)
+- Force with `CGOOSE_FORCE_WORKTREE=1` or the `w` CLI flag
 
 ### Local Config Overrides
 - **`.goose/config.yaml`** — cgoose automatically discovers it in the project root or session worktree
@@ -171,7 +171,7 @@ Run cgoose with a single-letter mode (like tmux):
 | `a` | **Auto-resume** — jump straight to launch with the last session, provider, and model for this project |
 | `n` | **New session** — skip pickers, start a new session with the last provider and model |
 | `s` | **Sessions only** — show only the session picker, skip provider and model selection, use last used |
-| `m` | **No-worktree** — run without git worktree isolation (overrides default worktree behavior) |
+| `m` | **No-worktree** — run without git worktree isolation (default mode) |
 | `w` | **Force worktree** — enable git worktree isolation (overrides `CGOOSE_NO_WORKTREE=1` or `m` flag) |
 | `ma` | Auto-resume + no worktree |
 | `ms` | Sessions only + no worktree |

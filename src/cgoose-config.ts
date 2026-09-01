@@ -2,7 +2,7 @@
  * cgoose configuration file (~/.config/cgoose/config.json)
  *
  * Currently supported settings:
- *   default_mode — "worktree" (default) | "no-worktree"
+ *   default_mode — "no-worktree" (default) | "worktree"
  */
 
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -26,7 +26,7 @@ export interface CgooseConfig {
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: CgooseConfig = {
-  default_mode: "worktree",
+  default_mode: "no-worktree",
 };
 
 // ─── Read ─────────────────────────────────────────────────────────────────────

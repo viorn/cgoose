@@ -45,7 +45,7 @@ Control:
 - `CGOOSE_NO_WORKTREE=1` — skip worktree creation
 - `CGOOSE_FORCE_WORKTREE=1` — force worktree (overrides above)
 - `-m` CLI flag disables worktree, `-w` enables it
-- Config `~/.config/cgoose/config.json`: `{ "default_mode": "no-worktree" }` — sets default when no flag/env is present
+- Config `~/.config/cgoose/config.json`: `{ "default_mode": "worktree" }` — override default to worktree mode
 
 ## Data Paths
 
