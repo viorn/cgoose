@@ -27,8 +27,8 @@ export function launchGoose(
   /** Session's original name (from db), for worktree lookup on resume.
    *  On resume, sessionName is the UUID; this is the human-readable name. */
   sessionDisplayName?: string,
-  /** Optional recipe name to use for this session.
-   *  If provided, goose run --recipe is used instead of goose session. */
+  /** Optional recipe name for new sessions (passed to goose run --recipe).
+   *  Ignored on resume — session history already contains it. */
   recipe?: string,
 ): void {
   writeProjectMeta(providerInfo.name, model, recipe);
@@ -131,24 +131,19 @@ export function launchGoose(
 
   // ─── Build args ─────────────────────────────────────────────────────────
   let args: string[];
-  if (recipe) {
-    // Recipe-based session: use goose run with --recipe and --interactive.
-    // goose session doesn't support --recipe, so we use goose run instead.
-    args = ["run", "--recipe", recipe];
-    if (!isNew) {
-      args.push("--resume");
+  if (isNew) {
+    // New session: use goose run (supports both recipe and plain interactive)
+    args = ["run", "--interactive"];
+    if (recipe) {
+      args.push("--recipe", recipe);
     }
     if (sessionName) {
       args.push("--name", sessionName);
     }
     args.push("--provider", effectiveProvider, "--model", model);
-    args.push("--interactive"); // Continue interactively after recipe instructions
   } else {
-    // Standard session
-    args = ["session"];
-    if (!isNew) {
-      args.push("--resume", "--history");
-    }
+    // Resume: use goose session --resume --history (recipe already in history)
+    args = ["session", "--resume", "--history"];
     if (sessionName) {
       args.push("--name", sessionName);
     }
