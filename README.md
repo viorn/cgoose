@@ -108,6 +108,7 @@ bun start
 - **Smart recovery** — detects stale worktree registrations and prunes them automatically
 - Skipped if not in a git repo or `CGOOSE_NO_WORKTREE=1` is set (default)
 - Force with `CGOOSE_FORCE_WORKTREE=1` or the `w` CLI flag
+- Default mode is `no-worktree`. Use `w` flag or set `default_mode: "worktree"` in config to enable worktrees
 
 ### Local Config Overrides
 - **`.goose/config.yaml`** — cgoose automatically discovers it in the project root or session worktree

@@ -44,7 +44,8 @@ When creating a new session inside a git repo:
 Control:
 - `CGOOSE_NO_WORKTREE=1` — skip worktree creation
 - `CGOOSE_FORCE_WORKTREE=1` — force worktree (overrides above)
-- `-m` CLI flag disables worktree, `-w` enables it
+- `-m` CLI flag disables worktree (default)
+- `-w` CLI flag enables worktree
 - Config `~/.config/cgoose/config.json`: `{ "default_mode": "worktree" }` — override default to worktree mode
 
 ## Data Paths
