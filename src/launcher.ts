@@ -18,7 +18,7 @@ import type { ProviderInfo } from "./config";
 import { readCgooseConfig } from "./cgoose-config";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
-import { getSessionRecipeInstructions } from "./sessions";
+import { isProfilePath } from "./profiles";
 
 export function launchGoose(
   sessionName: string,
@@ -143,20 +143,23 @@ export function launchGoose(
     }
     args.push("--provider", effectiveProvider, "--model", model);
   } else {
-    // Resume: use goose session --resume --history
-    args = ["session", "--resume", "--history"];
-
-    // Re-apply recipe instructions from stored session recipe_json
-    // (Goose doesn't do this automatically on session resume)
-    const storedInstructions = sessionName ? getSessionRecipeInstructions(sessionName) : null;
-    if (storedInstructions) {
-      args.push("--system", storedInstructions);
+    // Resume with profile: use goose run --resume --recipe <path> --interactive
+    // This re-applies recipe instructions (→ system prompt) and extensions.
+    if (recipe && isProfilePath(recipe)) {
+      args = ["run", "--resume", "--interactive", "--recipe", recipe];
+      if (sessionName) {
+        args.push("--name", sessionName);
+      }
+      args.push("--provider", effectiveProvider, "--model", model);
+    } else {
+      // Plain resume: goose session --resume --history
+      // (instructions are not re-applied — they were in the original system prompt)
+      args = ["session", "--resume", "--history"];
+      if (sessionName) {
+        args.push("--name", sessionName);
+      }
+      args.push("--provider", effectiveProvider, "--model", model);
     }
-
-    if (sessionName) {
-      args.push("--name", sessionName);
-    }
-    args.push("--provider", effectiveProvider, "--model", model);
   }
 
   const recipeLine = recipe ? `\n  ${pc.dim("Recipe:")}  ${pc.green(recipe)}` : "";
