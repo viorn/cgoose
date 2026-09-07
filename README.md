@@ -121,7 +121,7 @@ bun start
 - Create them via the TUI: **Recipe → ⚙️ Create minimal recipe...** wizard, or manually in `~/.config/goose/recipes/`
 - Launch via `goose run --recipe <name> --interactive` — no initial user message, straight to interactive
 - Resume uses `goose run --resume --recipe <name>` to re-apply `instructions` to the system prompt
-- **Known issue**: `goose run --resume` does not display previous messages on screen (context is loaded correctly). See [block/goose#11892](https://github.com/aaif-goose/goose/issues/11892)
+- **Known issue**: `goose run --resume` does not display previous messages on screen (context is loaded correctly). See [goose#11892](https://github.com/aaif-goose/goose/issues/11892)
 
 ### Recipe & Agent Mode
 - **Recipe integration** — after naming a session, cgoose shows a recipe picker if any recipes are installed
