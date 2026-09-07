@@ -36,8 +36,7 @@ import { createCustomProviderWizard, type CreatedProvider } from "./provider-cre
 import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
-import { discoverRecipes, type RecipeInfo } from "./recipes";
-import { discoverProfiles, createProfileWizard } from "./profiles";
+import { discoverRecipes, createRecipeWizard, type RecipeInfo } from "./recipes";
 import { launchGoose } from "./launcher";
 import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
@@ -187,7 +186,7 @@ async function main() {
   }
 
   // ─── Discover recipes ──────────────────────────────────────────────────
-  const allRecipes = discoverRecipes();
+  let allRecipes = discoverRecipes();
 
   // ─── State shared across steps ───────────────────────────────────────────
   let step: Step = "session";
@@ -430,75 +429,31 @@ async function main() {
       // ─── STEP 3: Recipe selection ───────────────────────────────────────
       case "recipe": {
         const lastMeta = readProjectMeta();
-        // Last selection wins: it can be a profile path, a recipe name, or "" (no profile).
-        // The first history entry is the project's default until changed.
         const lastRecipe = lastMeta?.recipeHistory?.[0] ?? "";
         const recipeHistory = lastMeta?.recipeHistory ?? [];
-        const profiles = discoverProfiles();
 
         const recipeOptions: { label: string; value: string; hint?: string }[] = [];
 
-        // Resolve the last selection: a cgoose profile (by path or by name),
-        // a goose recipe, or "" (default)
-        const lastProfile = lastRecipe
-          ? profiles.find((p) => p.path === lastRecipe) ?? profiles.find((p) => p.name === lastRecipe)
-          : undefined;
-        const lastRecipeObj = !lastProfile && lastRecipe
-          ? allRecipes.find((r) => r.name === lastRecipe)
-          : undefined;
-        // The value that must match the autocomplete initial value
-        const lastValue = lastProfile ? lastProfile.path : lastRecipeObj ? lastRecipeObj.name : "";
-
-        // 1) Last-used profile/recipe — always at the very top (if exists and available)
-        if (lastProfile) {
+        // 1) Last-used recipe — always at the very top (if exists and available)
+        const lastRecipeObj = lastRecipe ? allRecipes.find((r) => r.name === lastRecipe) : undefined;
+        if (lastRecipeObj) {
           recipeOptions.push({
-            label: `${lastProfile.title} ${pc.dim("←")}  ${pc.green("❶")} ${pc.dim("(profile)")}`,
-            value: lastProfile.path,
-            hint: (lastProfile.description || lastProfile.name) + ` ${pc.dim("← last used")}`,
-          });
-        } else if (lastRecipeObj) {
-          recipeOptions.push({
-            label: `${lastRecipeObj.title} ${pc.dim("←")}  ${pc.green("❶")} ${pc.dim("(recipe)")}`,
+            label: `${lastRecipeObj.title} ${pc.dim("←")}  ${pc.green("❶")}`,
             value: lastRecipeObj.name,
             hint: (lastRecipeObj.description || lastRecipeObj.name) + ` ${pc.dim("← last used")}`,
           });
         }
 
-        // 2) "Default (no profile/recipe)" option
+        // 2) "Default (no recipe)" option
         recipeOptions.push({
-          label: !lastProfile && !lastRecipeObj && lastRecipe === ""
-            ? pc.green("✦ Default (no profile)") + ` ${pc.dim("←")}`
-            : "Default (no profile)",
+          label: !lastRecipeObj && lastRecipe === ""
+            ? pc.green("✦ Default (no recipe)") + ` ${pc.dim("←")}`
+            : "Default (no recipe)",
           value: "",
           hint: pc.dim("standard agent session"),
         });
 
-        // 3) cgoose profiles (exclude the last-used one), sorted by history then title
-        const sortedProfiles = [...profiles]
-          .filter((p) => !lastProfile || p.path !== lastProfile.path)
-          .sort((a, b) => {
-            const aIdx = recipeHistory.indexOf(a.path);
-            const bIdx = recipeHistory.indexOf(b.path);
-            if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
-            if (aIdx !== -1) return -1;
-            if (bIdx !== -1) return 1;
-            return a.title.localeCompare(b.title);
-          });
-
-        for (const p of sortedProfiles) {
-          let hint = p.description || p.name;
-          let extra = ` ${pc.dim("(profile)")}`;
-          if (recipeHistory.includes(p.path) || recipeHistory.includes(p.name)) {
-            extra += ` ${pc.dim("(history)")}`;
-          }
-          recipeOptions.push({
-            label: p.title,
-            value: p.path,
-            hint: hint + extra,
-          });
-        }
-
-        // 4) Goose recipes (exclude last-used), sorted by history then alphabetical
+        // 3) Remaining recipes sorted by history then alphabetical
         const sortedRecipes = [...allRecipes]
           .filter((r) => !lastRecipeObj || r.name !== lastRecipeObj.name)
           .sort((a, b) => {
@@ -513,10 +468,10 @@ async function main() {
         for (const r of sortedRecipes) {
           let label = r.title;
           const hint = r.description || r.name;
-          let extra = ` ${pc.dim("(recipe)")}`;
+          let extra = "";
 
           if (recipeHistory.includes(r.name)) {
-            extra += ` ${pc.dim("(history)")}`;
+            extra = ` ${pc.dim("(history)")}`;
           }
 
           recipeOptions.push({
@@ -526,19 +481,19 @@ async function main() {
           });
         }
 
-        // 5) Create profile option
+        // 4) Create minimal recipe option
         recipeOptions.push({
-          label: pc.cyan("⚙️ Create profile..."),
-          value: "__create_profile__",
-          hint: pc.dim("save extensions + system prompt as a reusable profile"),
+          label: pc.cyan("⚙️ Create minimal recipe..."),
+          value: "__create_recipe__",
+          hint: pc.dim("system prompt + extensions, no starting prompt"),
         });
 
         const selected = await autocomplete({
-          message: `Profile / Recipe: ${pc.dim("(Esc ← back to session name)")}`,
-          placeholder: "Type to filter... (default = no profile)",
+          message: `Recipe: ${pc.dim("(Esc ← back to session name)")}`,
+          placeholder: "Type to filter recipes... (default = no recipe)",
           options: recipeOptions,
-          maxItems: 12,
-          initialValue: lastValue || "",
+          maxItems: 10,
+          initialValue: lastRecipe || "",
           filter: (search, opt) => {
             const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
             return haystack.includes(search.toLowerCase());
@@ -550,10 +505,12 @@ async function main() {
           continue;
         }
 
-        if (selected === "__create_profile__") {
-          const created = await createProfileWizard();
+        if (selected === "__create_recipe__") {
+          const created = await createRecipeWizard();
           if (created) {
-            selectedRecipe = created.path;
+            selectedRecipe = created;
+            // Re-discover recipes to include the new one
+            allRecipes = discoverRecipes();
             step = "provider";
           }
           continue; // cancelled → re-show the list
@@ -958,15 +915,12 @@ async function main() {
         const displayProvider = selectedProviderName === "ollama"
           ? "🦙 Ollama (local)"
           : selectedProviderName;
-        const allProfiles = discoverProfiles();
-        const profileObj = allProfiles.find((p) => p.path === selectedRecipe || p.name === selectedRecipe);
-        const recipeObj = !profileObj ? allRecipes.find((r) => r.name === selectedRecipe) : undefined;
+        const recipeObj = allRecipes.find((r) => r.name === selectedRecipe);
         const displayRecipe = selectedRecipe
-          ? (profileObj?.title ?? recipeObj?.title ?? selectedRecipe)
+          ? (recipeObj?.title ?? selectedRecipe)
           : pc.dim("none");
-        const recipeLabel = profileObj ? "Profile" : "Recipe";
         const recipeLine = selectedRecipe
-          ? `\n  ${pc.bold(recipeLabel)}:  ${pc.cyan(displayRecipe)}`
+          ? `\n  ${pc.bold("Recipe")}:  ${pc.cyan(displayRecipe)}`
           : "";
         outro(
           `${pc.green("✓")} Configuration complete:

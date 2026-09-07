@@ -115,12 +115,13 @@ bun start
 - Sets `GOOSE_ADDITIONAL_CONFIG_FILES` env var so Goose includes it alongside the main config
 - **Secrets resolution** — any `${VARIABLE}` or `$VARIABLE` references found in `.goose/config.yaml` values are resolved from Goose secrets (system keyring,`~/.config/goose/secrets.yaml`) and injected into the session environment
 
-### Profiles (cgoose profiles)
+### Minimal Recipes
 
-- **Profiles** are minimal YAML files in `~/.config/cgoose/profiles/*.yaml` that bundle a **system prompt** (`instructions:`) + **extension list** (`extensions:`)
-- Unlike goose recipes, profiles have **no `prompt:`** — so `instructions:` goes directly into the system prompt (survives context compaction)
-- Launch via `goose run --recipe <profile.yaml> --interactive`
-- **Known issue**: when resuming a profile-based session via `goose run --resume --recipe`, previous messages are not displayed on screen (the context is loaded correctly though). See [block/goose#11892](https://github.com/aaif-goose/goose/issues/11892)
+- **Minimal recipes** are goose recipes **without `prompt:`** — just `title` + `description` + `instructions:` (→ system prompt, survives compaction) + `extensions:`
+- Create them via the TUI: **Recipe → ⚙️ Create minimal recipe...** wizard, or manually in `~/.config/goose/recipes/`
+- Launch via `goose run --recipe <name> --interactive` — no initial user message, straight to interactive
+- Resume uses `goose run --resume --recipe <name>` to re-apply `instructions` to the system prompt
+- **Known issue**: `goose run --resume` does not display previous messages on screen (context is loaded correctly). See [block/goose#11892](https://github.com/aaif-goose/goose/issues/11892)
 
 ### Recipe & Agent Mode
 - **Recipe integration** — after naming a session, cgoose shows a recipe picker if any recipes are installed
