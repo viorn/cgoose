@@ -131,12 +131,16 @@ export function launchGoose(
 
   // ─── Build args ─────────────────────────────────────────────────────────
   let args: string[];
-  if (isNew) {
-    // New session: use goose run (supports both recipe and plain interactive)
-    args = ["run", "--interactive"];
-    if (recipe) {
-      args.push("--recipe", recipe);
+  if (isNew && recipe) {
+    // New session with recipe: goose run --interactive --recipe <name>
+    args = ["run", "--interactive", "--recipe", recipe];
+    if (sessionName) {
+      args.push("--name", sessionName);
     }
+    args.push("--provider", effectiveProvider, "--model", model);
+  } else if (isNew) {
+    // New session without recipe: goose session (doesn't need --text/--recipe)
+    args = ["session"];
     if (sessionName) {
       args.push("--name", sessionName);
     }
