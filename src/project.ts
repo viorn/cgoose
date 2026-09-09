@@ -20,6 +20,8 @@ export interface ProjectMeta {
   providerHistory: string[];
   /** History of recipes used in this project (first = last used; "" = no recipe) */
   recipeHistory: string[];
+  /** History of session sets used in this project (first = last used; "" = none) */
+  setHistory: string[];
   /** Maps session name → worktree path (created via cgoose git worktree integration) */
   worktrees?: Record<string, string>;
 }
@@ -60,17 +62,21 @@ export function readProjectMeta(): ProjectMeta | null {
     if (!raw.recipeHistory) {
       raw.recipeHistory = raw.recipe ? [raw.recipe] : [];
     }
+    // Migrate: ensure setHistory exists
+    if (!raw.setHistory) {
+      raw.setHistory = [];
+    }
     return raw as ProjectMeta;
   } catch { return null; }
 }
 
 /**
- * Save provider + model + recipe selection to project meta.
- * recipe === "" means "no recipe": it becomes the first recipeHistory entry, so
- * the next new session defaults to no recipe too until a recipe is chosen again.
+ * Save provider + model + set selection to project meta.
  * Memory is per-project, not per-session.
+ * recipe history is kept in ProjectMeta for backwards compatibility with
+ * existing project files but is no longer actively tracked.
  */
-export function writeProjectMeta(provider: string, model: string, recipe?: string): void {
+export function writeProjectMeta(provider: string, model: string, sessionSet?: string): void {
   const dir = CGOOSE_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = getProjectMetaPath();
@@ -89,13 +95,12 @@ export function writeProjectMeta(provider: string, model: string, recipe?: strin
   const filteredProvHistory = providerHistory.filter((p) => p !== provider);
   const newProviderHistory = [provider, ...filteredProvHistory].slice(0, 10);
 
-  // Track recipe history (most recent first, max 10).
-  // "" (no recipe) is a legitimate choice and is recorded too, so the history
-  // reflects the full sequence of selections, not just recipe usage.
-  const effectiveRecipe = recipe !== undefined ? recipe : (existing?.recipeHistory?.[0] ?? "");
-  const recipeHistory = existing?.recipeHistory ?? [];
-  const filteredRecipeHistory = recipeHistory.filter((r) => r !== effectiveRecipe);
-  const newRecipeHistory = [effectiveRecipe, ...filteredRecipeHistory].slice(0, 10);
+  // Track session set history (most recent first, max 10).
+  // "" (none) is a legitimate choice.
+  const effectiveSet = sessionSet !== undefined ? sessionSet : (existing?.setHistory?.[0] ?? "");
+  const setHistory = existing?.setHistory ?? [];
+  const filteredSetHistory = setHistory.filter((s) => s !== effectiveSet);
+  const newSetHistory = [effectiveSet, ...filteredSetHistory].slice(0, 10);
 
   // Preserve existing worktree mappings when merging
   const worktrees = existing?.worktrees ?? {};
@@ -103,7 +108,7 @@ export function writeProjectMeta(provider: string, model: string, recipe?: strin
   writeFileSync(path, JSON.stringify({
     modelHistory,
     providerHistory: newProviderHistory,
-    recipeHistory: newRecipeHistory,
+    setHistory: newSetHistory,
     worktrees,
   }, null, 2) + "\n");
 }

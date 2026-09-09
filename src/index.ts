@@ -30,19 +30,19 @@ import {
 import pc from "picocolors";
 
 import { getCurrentDirName, generateSessionName } from "./utils";
-import { readCgooseConfig } from "./cgoose-config";
+import { readCgooseConfig, listSessionSets, saveSessionSet, deleteSessionSet, type SessionSet } from "./cgoose-config";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
 import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
-import { discoverRecipes, createRecipeWizard, type RecipeInfo } from "./recipes";
+
 import { launchGoose } from "./launcher";
 import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Step = "session" | "session_name" | "recipe" | "provider" | "model" | "launch";
+type Step = "session" | "session_name" | "set" | "provider" | "model" | "launch";
 
 // ─── Session deletion dialog ─────────────────────────────────────────────────
 
@@ -161,6 +161,138 @@ async function handleDeleteSessions(
   return true;
 }
 
+// ─── Session Set Wizard ──────────────────────────────────────────────────────
+
+/** Interactive wizard to create a new session set */
+async function createSessionSetWizard(): Promise<string | null> {
+  log.step(pc.cyan("⚙️  Create a session set"));
+  log.info(pc.dim("Session sets bundle a system prompt with builtin extensions, always launched via `goose session`."));
+
+  // ── Step 1: Name (slug) ────────────────────────────────────────────────
+  const name = await text({
+    message: "Set name (used as unique identifier):",
+    placeholder: "e.g., code-review, my-stack",
+    validate: (val) => {
+      if (!val || val.trim().length === 0) return "Name cannot be empty";
+      if (!/^[a-zA-Z0-9_-]+$/.test(val.trim())) return "Use only letters, numbers, hyphens, underscores";
+      const existing = listSessionSets();
+      if (existing[val.trim()]) return `Set "${val.trim()}" already exists`;
+      return;
+    },
+  });
+  if (isCancel(name)) return null;
+  const setName = (name as string).trim();
+
+  // ── Step 2: Title ──────────────────────────────────────────────────────
+  const title = await text({
+    message: "Display title:",
+    placeholder: "e.g., Code Review, My Stack",
+    validate: (val) => (!val || val.trim().length === 0 ? "Title cannot be empty" : undefined),
+  });
+  if (isCancel(title)) return null;
+
+  // ── Step 3: Description ─────────────────────────────────────────────────
+  const desc = await text({
+    message: "Short description:",
+    placeholder: "e.g., Custom extensions and hints for reviewing code",
+    defaultValue: "",
+  });
+  if (isCancel(desc)) return null;
+
+  // ── Step 4: System prompt (will be written to .goosehints) ─────────────
+  log.info(pc.dim("This text is added to the system prompt via a temporary .goosehints file."));
+  const systemPrompt = await text({
+    message: "System prompt text:",
+    placeholder: "e.g., You are a senior code reviewer. Be thorough.",
+    defaultValue: "",
+  });
+  if (isCancel(systemPrompt)) return null;
+
+  // ── Step 5: Builtin extensions ─────────────────────────────────────────
+  const KNOWN_BUILTINS: { value: string; label: string; hint: string }[] = [
+    { value: "developer", label: "Developer", hint: "Shell commands, file read/write" },
+    { value: "analyze", label: "Analyze", hint: "Code structure analysis (tree-sitter)" },
+    { value: "memory", label: "Memory", hint: "Session memory persistence" },
+    { value: "summon", label: "Summon", hint: "Subagent delegation, knowledge loading" },
+    { value: "todo", label: "Todo", hint: "Task tracking within sessions" },
+    { value: "tom", label: "Top Of Mind", hint: "Custom context injection per turn" },
+    { value: "skills", label: "Skills", hint: "Skill instructions from filesystem/builtins" },
+    { value: "chatrecall", label: "Chat Recall", hint: "Search past sessions" },
+    { value: "summarize", label: "Summarize", hint: "File/directory LLM summarization" },
+    { value: "apps", label: "Apps", hint: "HTML/CSS/JS sandboxed apps" },
+    { value: "autovisualiser", label: "Auto Visualiser", hint: "Auto-visualisation" },
+    { value: "computercontroller", label: "Computer Controller", hint: "Desktop control" },
+    { value: "tutorial", label: "Tutorial", hint: "Guided tutorial mode" },
+  ];
+
+  const extNames = await multiselect({
+    message: "Builtin extensions to enable:",
+    options: KNOWN_BUILTINS,
+    required: false,
+    initialValues: ["developer"],
+  });
+  if (isCancel(extNames)) return null;
+
+  const builtins = (extNames as string[]).filter(Boolean);
+
+  // ── Save ────────────────────────────────────────────────────────────────
+  const set: SessionSet = {
+    name: setName,
+    title: (title as string),
+    description: (desc as string) || undefined,
+    systemPrompt: (systemPrompt as string) || "",
+    builtins,
+  };
+
+  saveSessionSet(set);
+  log.success(pc.green(`✓ Session set "${set.title}" created!`));
+
+  return setName;
+}
+
+/** Manage existing session sets: edit or delete */
+async function manageSessionSets(): Promise<void> {
+  const allSets = listSessionSets();
+  const keys = Object.keys(allSets);
+  if (keys.length === 0) {
+    log.info(pc.dim("No session sets defined."));
+    return;
+  }
+
+  const action = await select({
+    message: "Manage session sets:",
+    options: [
+      { value: "delete", label: "Delete a set" },
+      { value: "back", label: "← Go back" },
+    ],
+  });
+  if (isCancel(action) || action === "back") return;
+
+  if (action === "delete") {
+    const setOptions = keys.map((k) => ({
+      label: allSets[k].title,
+      value: k,
+      hint: allSets[k].description || allSets[k].systemPrompt.slice(0, 60),
+    }));
+
+    const toDelete = await select({
+      message: "Select a set to delete:",
+      options: setOptions,
+    });
+    if (isCancel(toDelete) || !toDelete) return;
+
+    const confirmed = await confirm({
+      message: `Delete set "${allSets[toDelete as string].title}"?`,
+      initialValue: false,
+    });
+    if (isCancel(confirmed) || !confirmed) return;
+
+    if (deleteSessionSet(toDelete as string)) {
+      log.success(pc.green(`✓ Set deleted`));
+    }
+  }
+}
+
 // ─── Main TUI ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -185,9 +317,6 @@ async function main() {
     process.exit(1);
   }
 
-  // ─── Discover recipes ──────────────────────────────────────────────────
-  let allRecipes = discoverRecipes();
-
   // ─── State shared across steps ───────────────────────────────────────────
   let step: Step = "session";
   let sessionName = "";
@@ -195,7 +324,7 @@ async function main() {
   let isNewSession = false;
   let selectedProviderName = "";
   let modelValue = "";
-  let selectedRecipe = "";
+  let selectedSet = ""; // name of the selected session set ("" = none)
   let lastAllSessions: GooseSession[] = [];
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
@@ -255,7 +384,7 @@ async function main() {
     if (meta) {
       selectedProviderName = meta.providerHistory?.[0] ?? "";
       modelValue = meta.modelHistory[meta.providerHistory?.[0] ?? ""]?.[0] ?? "";
-      selectedRecipe = meta.recipeHistory?.[0] ?? "";
+      selectedSet = meta.setHistory?.[0] ?? "";
     }
   }
 
@@ -386,13 +515,7 @@ async function main() {
         if (mode === "session-only" && selectedProviderName) {
           step = "launch";
         } else {
-          // Resuming in full mode: the recipe step is skipped, so restore the
-          // project's recipe from memory. Otherwise selectedRecipe stays "" and
-          // the resume would silently overwrite the project's recipe with "".
-          if (mode === "full") {
-            selectedRecipe = readProjectMeta()?.recipeHistory?.[0] ?? selectedRecipe;
-          }
-          step = "provider";
+          step = "set";
         }
         continue;
       }
@@ -421,79 +544,86 @@ async function main() {
         if (mode === "session-only" && selectedProviderName) {
           step = "launch";
         } else {
-          step = allRecipes.length > 0 ? "recipe" : "provider";
+          step = "set"; // go to set selection next
         }
         continue;
       }
 
-      // ─── STEP 3: Recipe selection ───────────────────────────────────────
-      case "recipe": {
+      // ─── STEP 2.5: Session set selection ────────────────────────────────
+      case "set": {
+        const allSets = listSessionSets();
+        const setKeys = Object.keys(allSets);
+
         const lastMeta = readProjectMeta();
-        const lastRecipe = lastMeta?.recipeHistory?.[0] ?? "";
-        const recipeHistory = lastMeta?.recipeHistory ?? [];
+        const lastSet = lastMeta?.setHistory?.[0] ?? "";
+        const setHistory = lastMeta?.setHistory ?? [];
 
-        const recipeOptions: { label: string; value: string; hint?: string }[] = [];
+        const setOptions: { label: string; value: string; hint?: string }[] = [];
 
-        // 1) Last-used recipe — always at the very top (if exists and available)
-        const lastRecipeObj = lastRecipe ? allRecipes.find((r) => r.name === lastRecipe) : undefined;
-        if (lastRecipeObj) {
-          recipeOptions.push({
-            label: `${lastRecipeObj.title} ${pc.dim("←")}  ${pc.green("❶")}`,
-            value: lastRecipeObj.name,
-            hint: (lastRecipeObj.description || lastRecipeObj.name) + ` ${pc.dim("← last used")}`,
+        // 1) Last-used set — always at the very top
+        const lastSetObj = lastSet ? allSets[lastSet] : undefined;
+        if (lastSetObj) {
+          setOptions.push({
+            label: `${lastSetObj.title} ${pc.dim("←")}  ${pc.green("❶")}`,
+            value: lastSetObj.name,
+            hint: (lastSetObj.description || lastSetObj.name) + ` ${pc.dim("← last used")}`,
           });
         }
 
-        // 2) "Default (no recipe)" option
-        recipeOptions.push({
-          label: !lastRecipeObj && lastRecipe === ""
-            ? pc.green("✦ Default (no recipe)") + ` ${pc.dim("←")}`
-            : "Default (no recipe)",
+        // 2) "None" option
+        setOptions.push({
+          label: !lastSetObj && lastSet === ""
+            ? pc.green("✦ None") + ` ${pc.dim("←")}`
+            : "None",
           value: "",
           hint: pc.dim("standard agent session"),
         });
 
-        // 3) Remaining recipes sorted by history then alphabetical
-        const sortedRecipes = [...allRecipes]
-          .filter((r) => !lastRecipeObj || r.name !== lastRecipeObj.name)
+        // 3) Remaining sets sorted by history then alphabetical
+        const sortedSets = Object.values(allSets)
+          .filter((s) => !lastSetObj || s.name !== lastSetObj.name)
           .sort((a, b) => {
-            const aIdx = recipeHistory.indexOf(a.name);
-            const bIdx = recipeHistory.indexOf(b.name);
+            const aIdx = setHistory.indexOf(a.name);
+            const bIdx = setHistory.indexOf(b.name);
             if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
             if (aIdx !== -1) return -1;
             if (bIdx !== -1) return 1;
             return a.name.localeCompare(b.name);
           });
 
-        for (const r of sortedRecipes) {
-          let label = r.title;
-          const hint = r.description || r.name;
+        for (const s of sortedSets) {
+          let label = s.title;
           let extra = "";
-
-          if (recipeHistory.includes(r.name)) {
+          if (setHistory.includes(s.name)) {
             extra = ` ${pc.dim("(history)")}`;
           }
-
-          recipeOptions.push({
+          setOptions.push({
             label,
-            value: r.name,
-            hint: hint + extra,
+            value: s.name,
+            hint: (s.description || s.name) + extra,
           });
         }
 
-        // 4) Create minimal recipe option
-        recipeOptions.push({
-          label: pc.cyan("⚙️ Create minimal recipe..."),
-          value: "__create_recipe__",
-          hint: pc.dim("system prompt + extensions, no starting prompt"),
+        // 4) Create new set option
+        setOptions.push({
+          label: pc.cyan("⚙️ Create new session set..."),
+          value: "__create_set__",
+          hint: pc.dim("system prompt + builtin extensions"),
+        });
+
+        // 5) Manage sets
+        setOptions.push({
+          label: pc.yellow("  Manage sets..."),
+          value: "__manage_sets__",
+          hint: pc.dim("edit or delete existing sets"),
         });
 
         const selected = await autocomplete({
-          message: `Recipe: ${pc.dim("(Esc ← back to session name)")}`,
-          placeholder: "Type to filter recipes... (default = no recipe)",
-          options: recipeOptions,
+          message: `Session set: ${pc.dim("(Esc ← back to session name)")}`,
+          placeholder: "Type to filter... (default = none)",
+          options: setOptions,
           maxItems: 10,
-          initialValue: lastRecipe || "",
+          initialValue: lastSet || "",
           filter: (search, opt) => {
             const haystack = `${opt.value} ${opt.label} ${opt.hint || ""}`.toLowerCase();
             return haystack.includes(search.toLowerCase());
@@ -501,27 +631,30 @@ async function main() {
         });
 
         if (isCancel(selected)) {
-          step = "session_name"; // back to session name
+          step = "session_name";
           continue;
         }
 
-        if (selected === "__create_recipe__") {
-          const created = await createRecipeWizard();
+        if (selected === "__create_set__") {
+          const created = await createSessionSetWizard();
           if (created) {
-            selectedRecipe = created;
-            // Re-discover recipes to include the new one
-            allRecipes = discoverRecipes();
+            selectedSet = created;
             step = "provider";
           }
-          continue; // cancelled → re-show the list
+          continue;
         }
 
-        selectedRecipe = selected as string;
+        if (selected === "__manage_sets__") {
+          await manageSessionSets();
+          continue; // re-show set list
+        }
+
+        selectedSet = selected as string;
         step = "provider";
         continue;
       }
 
-      // ─── STEP 4: Provider selection ─────────────────────────────────────
+      // ─── STEP 3: Provider selection ─────────────────────────────────────
       case "provider": {
         const lastMeta = readProjectMeta();
         const lastProviderRaw = lastMeta?.providerHistory?.[0] ?? null;
@@ -605,7 +738,7 @@ async function main() {
         });
 
         const selected = await autocomplete({
-          message: `Provider: ${pc.dim("(Esc ← back to recipe)")}`,
+          message: `Provider: ${pc.dim("(Esc ← back to set selection)")}`,
           placeholder: "Type to filter providers...",
           options: providerOptions,
           maxItems: 10,
@@ -617,7 +750,9 @@ async function main() {
         });
 
         if (isCancel(selected)) {
-          step = allRecipes.length > 0 ? "recipe" : "session_name"; // back to recipe or session name
+          // Back: sets → session_name
+          const hasSets = Object.keys(listSessionSets()).length > 0;
+          step = hasSets ? "set" : "session_name";
           continue;
         }
 
@@ -915,18 +1050,19 @@ async function main() {
         const displayProvider = selectedProviderName === "ollama"
           ? "🦙 Ollama (local)"
           : selectedProviderName;
-        const recipeObj = allRecipes.find((r) => r.name === selectedRecipe);
-        const displayRecipe = selectedRecipe
-          ? (recipeObj?.title ?? selectedRecipe)
-          : pc.dim("none");
-        const recipeLine = selectedRecipe
-          ? `\n  ${pc.bold("Recipe")}:  ${pc.cyan(displayRecipe)}`
+        // Show set info
+        const allSets = listSessionSets();
+        const setObj = selectedSet ? allSets[selectedSet] : undefined;
+        const displaySet = setObj ? setObj.title : pc.dim("none");
+        const setLine = selectedSet
+          ? `\n  ${pc.bold("Set")}:     ${pc.cyan(displaySet)}`
           : "";
+
         outro(
           `${pc.green("✓")} Configuration complete:
   ${pc.bold("Session")}:  ${pc.cyan(displayName)}
   ${pc.bold("Provider")}: ${pc.yellow(displayProvider)}
-  ${pc.bold("Model")}:    ${pc.magenta(modelValue)}${recipeLine}`,
+  ${pc.bold("Model")}:    ${pc.magenta(modelValue)}${setLine}`,
         );
 
         const shouldLaunch = await confirm({ message: `Launch Goose now? ${pc.dim("(Esc ← back to sessions)")}`, initialValue: true });
@@ -936,7 +1072,7 @@ async function main() {
           continue;
         }
 
-        launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName, selectedRecipe);
+        launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName, selectedSet);
         return; // never reached — launchGoose replaces process
       }
     }
