@@ -199,8 +199,8 @@ async function createSessionSetWizard(): Promise<string | null> {
   });
   if (isCancel(desc)) return null;
 
-  // ── Step 4: System prompt (will be written to .goosehints) ─────────────
-  log.info(pc.dim("This text is added to the system prompt via a temporary .goosehints file."));
+  // ── Step 4: System prompt (will be passed via --system flag) ──────────
+  log.info(pc.dim("This text is passed as additional system instructions via the --system flag."));
   const systemPrompt = await text({
     message: "System prompt text:",
     placeholder: "e.g., You are a senior code reviewer. Be thorough.",

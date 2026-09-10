@@ -4,7 +4,7 @@
  * Always uses `goose session` (never `goose run --recipe`).
  * Session sets (system prompt + extensions) are applied via:
  *   - Extensions → CLI flags (--with-builtin, --with-extension)
- *   - System prompt → written to .goosehints in the working directory
+ *   - System prompt → --system flag
  *
  * Git worktree integration:
  * - New sessions create a git worktree (<repo-root>/.worktree/<name>) and launch Goose there
@@ -13,8 +13,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
 import pc from "picocolors";
 import { writeProjectMeta, saveWorktreeMapping } from "./project";
@@ -136,21 +136,6 @@ export function launchGoose(
     }
   }
 
-  // ─── Write .goosehints from session set ──────────────────────────────────
-  // Goose automatically reads .goosehints files and adds them to the system prompt.
-  // We write the set's system prompt to a .goosehints file in the target dir.
-  // On resume, we don't overwrite — the session's existing .goosehints may have changed.
-  const targetDir = worktreePath || resolve(".");
-  const goosehintsPath = join(targetDir, ".goosehints");
-  if (set && set.systemPrompt && isNew) {
-    try {
-      writeFileSync(goosehintsPath, set.systemPrompt + "\n", "utf-8");
-      console.log(pc.dim(`  📝 .goosehints: ${pc.cyan(goosehintsPath)}`));
-    } catch (e) {
-      console.log(pc.yellow(`  ⚠ Could not write .goosehints: ${e}`));
-    }
-  }
-
   // ─── Build args — always `goose session` ─────────────────────────────────
   const args: string[] = [];
 
@@ -161,25 +146,30 @@ export function launchGoose(
     }
     args.push("--provider", effectiveProvider, "--model", model);
 
-    // Add extensions from session set
-    if (set && set.builtins.length > 0) {
-      args.push("--with-builtin", set.builtins.join(","));
-    }
-
-    // Pass all extensions explicitly via --with-builtin so the session has
-    // the right toolset from the start. Also tell goose not to load its
-    // default profile, since the set defines exactly what we want.
-    // But only if the user explicitly chose a set — if no set, keep defaults.
-    if (set && set.builtins.length > 0) {
-      args.push("--no-profile");
+    // Session set: pass system prompt via --system, builtins via --with-builtin
+    if (set) {
+      if (set.systemPrompt) {
+        args.push("--system", set.systemPrompt);
+      }
+      if (set.builtins.length > 0) {
+        args.push("--with-builtin", set.builtins.join(","));
+        // Don't load default profile — the set defines exactly what we want
+        args.push("--no-profile");
+      }
     }
   } else {
-    // Resume — don't re-apply set (existing session has its own configuration)
+    // Resume — re-apply set's system prompt (--system is in-memory only,
+    // not persisted in session DB). Builtins are persisted in the session
+    // DB so we skip --with-builtin to avoid duplicate extensions.
     args.push("session", "--resume", "--history");
     if (sessionName) {
       args.push("--name", sessionName);
     }
     args.push("--provider", effectiveProvider, "--model", model);
+
+    if (set?.systemPrompt) {
+      args.push("--system", set.systemPrompt);
+    }
   }
 
   // ─── Display summary ─────────────────────────────────────────────────────
