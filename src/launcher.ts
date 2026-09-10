@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import pc from "picocolors";
-import { writeProjectMeta, saveWorktreeMapping } from "./project";
+import { writeProjectMeta, saveWorktreeMapping, saveSessionPrompt, getSessionPrompt } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
 import { readCgooseConfig, getSessionSet } from "./cgoose-config";
@@ -150,6 +150,8 @@ export function launchGoose(
     if (set) {
       if (set.systemPrompt) {
         args.push("--system", set.systemPrompt);
+        // Persist the original prompt for consistent resume behaviour
+        saveSessionPrompt(worktreeName, set.systemPrompt);
       }
       if (set.builtins.length > 0) {
         args.push("--with-builtin", set.builtins.join(","));
@@ -158,16 +160,21 @@ export function launchGoose(
       }
     }
   } else {
-    // Resume — re-apply set's system prompt (--system is in-memory only,
-    // not persisted in session DB). Builtins are persisted in the session
-    // DB so we skip --with-builtin to avoid duplicate extensions.
+    // Resume — re-apply system prompt (--system is in-memory only, not
+    // persisted in session DB). Use the *original* prompt saved when the
+    // session was first created, so that even if the set definition changes
+    // later, the resumed session still gets its original instructions.
     args.push("session", "--resume", "--history");
     if (sessionName) {
       args.push("--name", sessionName);
     }
     args.push("--provider", effectiveProvider, "--model", model);
 
-    if (set?.systemPrompt) {
+    const originalPrompt = getSessionPrompt(worktreeName);
+    if (originalPrompt) {
+      args.push("--system", originalPrompt);
+    } else if (set?.systemPrompt) {
+      // Fallback: if no saved prompt yet, use current set's prompt
       args.push("--system", set.systemPrompt);
     }
   }

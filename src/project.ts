@@ -24,6 +24,14 @@ export interface ProjectMeta {
   setHistory: string[];
   /** Maps session name → worktree path (created via cgoose git worktree integration) */
   worktrees?: Record<string, string>;
+  /**
+   * Stores the system prompt used when each session was created.
+   * Key = session display name, value = the original system prompt text.
+   * This is used on resume to pass the same --system prompt that was used
+   * when the session was first launched, ensuring consistency even if the
+   * session set's prompt was later modified.
+   */
+  sessionPrompts?: Record<string, string>;
 }
 
 // ─── Project key ─────────────────────────────────────────────────────────────
@@ -144,6 +152,43 @@ export function removeWorktreeMapping(sessionName: string): void {
     const meta = JSON.parse(readFileSync(path, "utf-8"));
     if (meta.worktrees?.[sessionName]) {
       delete meta.worktrees[sessionName];
+      writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
+    }
+  } catch { /* ignore */ }
+}
+
+// ─── Session prompt persistence ─────────────────────────────────────────────
+
+/** Save the system prompt used for a specific session (for resume consistency). */
+export function saveSessionPrompt(sessionName: string, prompt: string): void {
+  const path = getProjectMetaPath();
+  let meta: Record<string, any> = {};
+  if (existsSync(path)) {
+    try { meta = JSON.parse(readFileSync(path, "utf-8")); } catch { meta = {}; }
+  }
+  if (!meta.sessionPrompts) meta.sessionPrompts = {};
+  meta.sessionPrompts[sessionName] = prompt;
+  writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
+}
+
+/** Get the original system prompt for a session (saved when it was created). */
+export function getSessionPrompt(sessionName: string): string | undefined {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf-8"));
+    return meta.sessionPrompts?.[sessionName];
+  } catch { return undefined; }
+}
+
+/** Remove the stored system prompt for a session (e.g. on session deletion). */
+export function removeSessionPrompt(sessionName: string): void {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return;
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf-8"));
+    if (meta.sessionPrompts?.[sessionName]) {
+      delete meta.sessionPrompts[sessionName];
       writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
     }
   } catch { /* ignore */ }
