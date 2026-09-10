@@ -45,21 +45,23 @@ export function readProjectMeta(): ProjectMeta | null {
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8"));
     // Migrate old format: { provider, model } → { provider, modelHistory }
-    if (raw.model && !raw.modelHistory) {
-      raw.modelHistory = { [raw.provider]: [raw.model] };
+    // Also handles the case where `model` is "" but modelHistory exists
+    if (!raw.modelHistory) {
+      raw.modelHistory = raw.model ? { [raw.provider ?? ""]: [raw.model] } : {};
     }
-    // Migrate: ensure providerHistory exists
-    if (!raw.providerHistory && raw.provider) {
-      raw.providerHistory = [raw.provider];
-    } else if (!raw.providerHistory) {
-      raw.providerHistory = [];
+    // Migrate: ensure providerHistory exists (clean empty strings)
+    if (!raw.providerHistory) {
+      raw.providerHistory = raw.provider ? [raw.provider] : [];
     }
-    // Migrate: ensure recipe history exists.
-    // The first entry is the project's default (last choice), so seed it from
-    // the old standalone `recipe` field if present ("" = no recipe).
+    // Migrate: ensure recipe history exists (clean empty strings)
+    // "" (no recipe) is a valid recipeHistory entry, preserve it
     if (!raw.recipeHistory) {
-      raw.recipeHistory = raw.recipe ? [raw.recipe] : [];
+      raw.recipeHistory = (raw.recipe !== undefined && raw.recipe !== null)
+        ? [raw.recipe]
+        : [];
     }
+    // Sanitize: remove empty strings from providerHistory
+    raw.providerHistory = raw.providerHistory.filter(Boolean);
     return raw as ProjectMeta;
   } catch { return null; }
 }
@@ -85,7 +87,8 @@ export function writeProjectMeta(provider: string, model: string, recipe?: strin
   modelHistory[provider] = [model, ...prevList].slice(0, 10); // keep max 10 per provider
 
   // Track provider history (most recent first, max 10)
-  const providerHistory = existing?.providerHistory ?? [];
+  // Filter out empty strings to prevent corrupted entries
+  const providerHistory = (existing?.providerHistory ?? []).filter(Boolean);
   const filteredProvHistory = providerHistory.filter((p) => p !== provider);
   const newProviderHistory = [provider, ...filteredProvHistory].slice(0, 10);
 
