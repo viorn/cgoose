@@ -153,6 +153,14 @@ export function launchGoose(
         // Persist the original prompt for consistent resume behaviour
         saveSessionPrompt(worktreeName, set.systemPrompt);
       }
+
+      // Stdio extensions (e.g. "mcpls --trust-project-config")
+      if (set.stdioExtensions && set.stdioExtensions.length > 0) {
+        for (const ext of set.stdioExtensions) {
+          args.push("--with-extension", ext);
+        }
+      }
+
       if (set.builtins.length > 0) {
         args.push("--with-builtin", set.builtins.join(","));
         // Don't load default profile — the set defines exactly what we want

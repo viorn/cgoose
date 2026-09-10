@@ -48,6 +48,12 @@ export interface SessionSet {
   systemPrompt: string;
   /** Builtin extensions to enable (e.g., "developer", "analyze") */
   builtins: string[];
+  /**
+   * Stdio extensions to launch (passed via --with-extension).
+   * Each entry is a shell command string, optionally prefixed with 'name:'.
+   * Example: "mcpls --trust-project-config" or "mcpls:mcpls --trust-project-config"
+   */
+  stdioExtensions?: string[];
 }
 
 export interface CgooseConfig {
@@ -137,6 +143,7 @@ function readSetFile(filePath: string): SessionSet | undefined {
         description: data.description ?? undefined,
         systemPrompt: data.systemPrompt ?? data.system_prompt ?? "",
         builtins: data.builtins ?? data.builtin_extensions ?? [],
+        stdioExtensions: data.stdioExtensions ?? data.stdio_extensions ?? undefined,
       };
     }
     return undefined;
@@ -187,6 +194,7 @@ export function saveSessionSet(set: SessionSet): void {
 
   if (set.description) yamlObj.description = set.description;
   if (set.systemPrompt) yamlObj.systemPrompt = set.systemPrompt;
+  if (set.stdioExtensions && set.stdioExtensions.length > 0) yamlObj.stdioExtensions = set.stdioExtensions;
 
   const yaml = yamlDump(yamlObj, {
     indent: 2,

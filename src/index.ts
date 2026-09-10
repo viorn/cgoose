@@ -235,6 +235,21 @@ async function createSessionSetWizard(): Promise<string | null> {
 
   const builtins = (extNames as string[]).filter(Boolean);
 
+  // ── Step 6: Stdio extensions (optional) ────────────────────────────────
+  log.info(pc.dim("Stdio extensions are passed via --with-extension (e.g. 'mcpls --trust-project-config')." +
+    "\nLeave empty to skip."));
+  const stdioExt = await text({
+    message: "Stdio extensions (comma-separated, optional):",
+    placeholder: "mcpls --trust-project-config, npx -y @some/mcp-server",
+    defaultValue: "",
+  });
+  if (isCancel(stdioExt)) return null;
+
+  const stdioExtensions = (stdioExt as string)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   // ── Save ────────────────────────────────────────────────────────────────
   const set: SessionSet = {
     name: setName,
@@ -242,6 +257,7 @@ async function createSessionSetWizard(): Promise<string | null> {
     description: (desc as string) || undefined,
     systemPrompt: (systemPrompt as string) || "",
     builtins,
+    stdioExtensions: stdioExtensions.length > 0 ? stdioExtensions : undefined,
   };
 
   saveSessionSet(set);
