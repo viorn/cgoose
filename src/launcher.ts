@@ -1,5 +1,10 @@
 /**
- * Launch Goose with session name, provider, and model
+ * Launch Goose with session name, provider, model, and optional session set.
+ *
+ * Always uses `goose session` (never `goose run --recipe`).
+ * Session sets (system prompt + extensions) are applied via:
+ *   - Extensions → CLI flags (--with-builtin, --with-extension)
+ *   - System prompt → --system flag
  *
  * Git worktree integration:
  * - New sessions create a git worktree (<repo-root>/.worktree/<name>) and launch Goose there
@@ -12,10 +17,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import pc from "picocolors";
-import { writeProjectMeta, saveWorktreeMapping } from "./project";
+import { writeProjectMeta, saveWorktreeMapping, saveSessionPrompt, getSessionPrompt } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
-import { readCgooseConfig } from "./cgoose-config";
+import { readCgooseConfig, getSessionSet } from "./cgoose-config";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
 
@@ -27,11 +32,13 @@ export function launchGoose(
   /** Session's original name (from db), for worktree lookup on resume.
    *  On resume, sessionName is the UUID; this is the human-readable name. */
   sessionDisplayName?: string,
-  /** Optional recipe name for new sessions (passed to goose run --recipe).
-   *  Ignored on resume — session history already contains it. */
-  recipe?: string,
+  /** Optional session set name (defined in cgoose config). */
+  sessionSet?: string,
 ): void {
-  writeProjectMeta(providerInfo.name, model, recipe);
+  writeProjectMeta(providerInfo.name, model, sessionSet);
+
+  // ─── Resolve session set ───────────────────────────────────────────────
+  const set = sessionSet ? getSessionSet(sessionSet) : undefined;
 
   // ─── Git worktree setup ────────────────────────────────────────────────
   let worktreePath: string | null = null;
@@ -129,46 +136,56 @@ export function launchGoose(
     }
   }
 
-  // ─── Build args ─────────────────────────────────────────────────────────
-  let args: string[];
-  if (isNew && recipe) {
-    // New session with recipe: goose run --interactive --recipe <name>
-    args = ["run", "--interactive", "--recipe", recipe];
+  // ─── Build args — always `goose session` ─────────────────────────────────
+  const args: string[] = [];
+
+  if (isNew) {
+    args.push("session");
     if (sessionName) {
       args.push("--name", sessionName);
     }
     args.push("--provider", effectiveProvider, "--model", model);
-  } else if (isNew) {
-    // New session without recipe: goose session (doesn't need --text/--recipe)
-    args = ["session"];
-    if (sessionName) {
-      args.push("--name", sessionName);
+
+    // Session set: pass system prompt via --system, builtins via --with-builtin
+    if (set) {
+      if (set.systemPrompt) {
+        args.push("--system", set.systemPrompt);
+        // Persist the original prompt for consistent resume behaviour
+        saveSessionPrompt(worktreeName, set.systemPrompt);
+      }
+      if (set.builtins.length > 0) {
+        args.push("--with-builtin", set.builtins.join(","));
+        // Don't load default profile — the set defines exactly what we want
+        args.push("--no-profile");
+      }
     }
-    args.push("--provider", effectiveProvider, "--model", model);
-  } else if (recipe) {
-    // Resume with recipe: goose run --resume --recipe <name> --interactive.
-    // Only `goose run` re-applies recipe instructions (→ system prompt) on resume;
-    // `goose session` does not support --system / --recipe.
-    args = ["run", "--resume", "--interactive", "--recipe", recipe];
-    if (sessionName) {
-      args.push("--name", sessionName);
-    }
-    args.push("--provider", effectiveProvider, "--model", model);
   } else {
-    // Plain resume: goose session --resume --history
-    args = ["session", "--resume", "--history"];
+    // Resume — re-apply system prompt (--system is in-memory only, not
+    // persisted in session DB). Use the *original* prompt saved when the
+    // session was first created, so that even if the set definition changes
+    // later, the resumed session still gets its original instructions.
+    args.push("session", "--resume", "--history");
     if (sessionName) {
       args.push("--name", sessionName);
     }
     args.push("--provider", effectiveProvider, "--model", model);
+
+    const originalPrompt = getSessionPrompt(worktreeName);
+    if (originalPrompt) {
+      args.push("--system", originalPrompt);
+    } else if (set?.systemPrompt) {
+      // Fallback: if no saved prompt yet, use current set's prompt
+      args.push("--system", set.systemPrompt);
+    }
   }
 
-  const recipeLine = recipe ? `\n  ${pc.dim("Recipe:")}  ${pc.green(recipe)}` : "";
+  // ─── Display summary ─────────────────────────────────────────────────────
+  const setLine = set ? `\n  ${pc.dim("Set:")}      ${pc.green(set.title)}` : "";
   console.log(
     `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
   ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
   ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}
-  ${pc.dim("Model:")}    ${pc.magenta(model)}${recipeLine}
+  ${pc.dim("Model:")}    ${pc.magenta(model)}${setLine}
   ${worktreePath ? `${pc.dim("Workdir:")}  ${pc.cyan(worktreePath)}\n` : ""}
   ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}
   `,
@@ -180,8 +197,12 @@ export function launchGoose(
     spawnOpts.cwd = worktreePath;
   }
 
-  return new Promise<number | null>((resolve) => {
-    const child = spawn("goose", args, spawnOpts as any);
-    child.on("exit", (code) => resolve(code));
+  // Return a promise so the caller can await exit if needed.
+  // The function type is `void` for backwards compatibility with callers
+  // that don't use the promise.
+  // Spawn goose; we intentionally don't await — the child process takes over the terminal.
+  const child = spawn("goose", args, spawnOpts as any);
+  child.on("exit", () => {
+    /* goose exited */
   });
 }

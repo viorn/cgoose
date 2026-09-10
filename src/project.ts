@@ -20,8 +20,18 @@ export interface ProjectMeta {
   providerHistory: string[];
   /** History of recipes used in this project (first = last used; "" = no recipe) */
   recipeHistory: string[];
+  /** History of session sets used in this project (first = last used; "" = none) */
+  setHistory: string[];
   /** Maps session name → worktree path (created via cgoose git worktree integration) */
   worktrees?: Record<string, string>;
+  /**
+   * Stores the system prompt used when each session was created.
+   * Key = session display name, value = the original system prompt text.
+   * This is used on resume to pass the same --system prompt that was used
+   * when the session was first launched, ensuring consistency even if the
+   * session set's prompt was later modified.
+   */
+  sessionPrompts?: Record<string, string>;
 }
 
 // ─── Project key ─────────────────────────────────────────────────────────────
@@ -45,32 +55,38 @@ export function readProjectMeta(): ProjectMeta | null {
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8"));
     // Migrate old format: { provider, model } → { provider, modelHistory }
-    if (raw.model && !raw.modelHistory) {
-      raw.modelHistory = { [raw.provider]: [raw.model] };
+    // Also handles the case where `model` is "" but modelHistory exists
+    if (!raw.modelHistory) {
+      raw.modelHistory = raw.model ? { [raw.provider ?? ""]: [raw.model] } : {};
     }
-    // Migrate: ensure providerHistory exists
-    if (!raw.providerHistory && raw.provider) {
-      raw.providerHistory = [raw.provider];
-    } else if (!raw.providerHistory) {
-      raw.providerHistory = [];
+    // Migrate: ensure providerHistory exists (clean empty strings)
+    if (!raw.providerHistory) {
+      raw.providerHistory = raw.provider ? [raw.provider] : [];
     }
-    // Migrate: ensure recipe history exists.
-    // The first entry is the project's default (last choice), so seed it from
-    // the old standalone `recipe` field if present ("" = no recipe).
+    // Migrate: ensure recipe history exists (clean empty strings)
+    // "" (no recipe) is a valid recipeHistory entry, preserve it
     if (!raw.recipeHistory) {
-      raw.recipeHistory = raw.recipe ? [raw.recipe] : [];
+      raw.recipeHistory = (raw.recipe !== undefined && raw.recipe !== null)
+        ? [raw.recipe]
+        : [];
     }
+// Migrate: ensure setHistory exists
+    if (!raw.setHistory) {
+      raw.setHistory = [];
+    }
+    // Sanitize: remove empty strings from providerHistory
+    raw.providerHistory = raw.providerHistory.filter(Boolean);
     return raw as ProjectMeta;
   } catch { return null; }
 }
 
 /**
- * Save provider + model + recipe selection to project meta.
- * recipe === "" means "no recipe": it becomes the first recipeHistory entry, so
- * the next new session defaults to no recipe too until a recipe is chosen again.
+ * Save provider + model + set selection to project meta.
  * Memory is per-project, not per-session.
+ * recipe history is kept in ProjectMeta for backwards compatibility with
+ * existing project files but is no longer actively tracked.
  */
-export function writeProjectMeta(provider: string, model: string, recipe?: string): void {
+export function writeProjectMeta(provider: string, model: string, sessionSet?: string): void {
   const dir = CGOOSE_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = getProjectMetaPath();
@@ -85,17 +101,17 @@ export function writeProjectMeta(provider: string, model: string, recipe?: strin
   modelHistory[provider] = [model, ...prevList].slice(0, 10); // keep max 10 per provider
 
   // Track provider history (most recent first, max 10)
-  const providerHistory = existing?.providerHistory ?? [];
+  // Filter out empty strings to prevent corrupted entries
+  const providerHistory = (existing?.providerHistory ?? []).filter(Boolean);
   const filteredProvHistory = providerHistory.filter((p) => p !== provider);
   const newProviderHistory = [provider, ...filteredProvHistory].slice(0, 10);
 
-  // Track recipe history (most recent first, max 10).
-  // "" (no recipe) is a legitimate choice and is recorded too, so the history
-  // reflects the full sequence of selections, not just recipe usage.
-  const effectiveRecipe = recipe !== undefined ? recipe : (existing?.recipeHistory?.[0] ?? "");
-  const recipeHistory = existing?.recipeHistory ?? [];
-  const filteredRecipeHistory = recipeHistory.filter((r) => r !== effectiveRecipe);
-  const newRecipeHistory = [effectiveRecipe, ...filteredRecipeHistory].slice(0, 10);
+  // Track session set history (most recent first, max 10).
+  // "" (none) is a legitimate choice.
+  const effectiveSet = sessionSet !== undefined ? sessionSet : (existing?.setHistory?.[0] ?? "");
+  const setHistory = existing?.setHistory ?? [];
+  const filteredSetHistory = setHistory.filter((s) => s !== effectiveSet);
+  const newSetHistory = [effectiveSet, ...filteredSetHistory].slice(0, 10);
 
   // Preserve existing worktree mappings when merging
   const worktrees = existing?.worktrees ?? {};
@@ -103,7 +119,7 @@ export function writeProjectMeta(provider: string, model: string, recipe?: strin
   writeFileSync(path, JSON.stringify({
     modelHistory,
     providerHistory: newProviderHistory,
-    recipeHistory: newRecipeHistory,
+    setHistory: newSetHistory,
     worktrees,
   }, null, 2) + "\n");
 }
@@ -136,6 +152,43 @@ export function removeWorktreeMapping(sessionName: string): void {
     const meta = JSON.parse(readFileSync(path, "utf-8"));
     if (meta.worktrees?.[sessionName]) {
       delete meta.worktrees[sessionName];
+      writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
+    }
+  } catch { /* ignore */ }
+}
+
+// ─── Session prompt persistence ─────────────────────────────────────────────
+
+/** Save the system prompt used for a specific session (for resume consistency). */
+export function saveSessionPrompt(sessionName: string, prompt: string): void {
+  const path = getProjectMetaPath();
+  let meta: Record<string, any> = {};
+  if (existsSync(path)) {
+    try { meta = JSON.parse(readFileSync(path, "utf-8")); } catch { meta = {}; }
+  }
+  if (!meta.sessionPrompts) meta.sessionPrompts = {};
+  meta.sessionPrompts[sessionName] = prompt;
+  writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
+}
+
+/** Get the original system prompt for a session (saved when it was created). */
+export function getSessionPrompt(sessionName: string): string | undefined {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf-8"));
+    return meta.sessionPrompts?.[sessionName];
+  } catch { return undefined; }
+}
+
+/** Remove the stored system prompt for a session (e.g. on session deletion). */
+export function removeSessionPrompt(sessionName: string): void {
+  const path = getProjectMetaPath();
+  if (!existsSync(path)) return;
+  try {
+    const meta = JSON.parse(readFileSync(path, "utf-8"));
+    if (meta.sessionPrompts?.[sessionName]) {
+      delete meta.sessionPrompts[sessionName];
       writeFileSync(path, JSON.stringify(meta, null, 2) + "\n");
     }
   } catch { /* ignore */ }
