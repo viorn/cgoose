@@ -13,7 +13,7 @@ cgoose is a TUI wrapper around `goose session` CLI. It launches Goose — it doe
 - Reads `~/.config/goose/custom_providers/*.json` for custom provider definitions (engine, baseUrl, authToken)
 - **Session sets** (`~/.config/cgoose/sets/<name>.json`) replace recipes as the primary way to bundle a system prompt + builtin extensions. Recipes are still discovered via `goose recipe list --format json` but cgoose always launches via `goose session` (never `goose run --recipe`)
 - Set history tracked per-project (like provider/model history), last used shown at top
-- Session system prompts are persisted per-session in project meta (`sessionPrompts`), so resuming a session always uses the *original* prompt it was created with — even if the set definition changes later
+- The selected **set is the source of truth** for the system prompt: on resume the *current* set's prompt is applied, and **None** explicitly clears any stored prompt via `--system ""` (Goose ≥1.55 persists `--system` in the session DB, so omitting the flag would restore the old prompt instead of clearing it)
 - On new session, set's system prompt is passed via `--system`, builtins via `--with-builtin` + `--no-profile`
 - Secrets resolved from: env vars → system keyring → `~/.config/goose/secrets.yaml` → JSON config files
 - Config file: `~/.config/cgoose/config.json` — supports `default_mode` (`"worktree"` or `"no-worktree"`)
@@ -49,13 +49,13 @@ A session set is a JSON file at `~/.config/cgoose/sets/<name>.json`:
 - `builtins` → passed via `--with-builtin <comma,separated>` plus `--no-profile` (so the set fully defines the toolset)
 - Created/managed via the TUI: **Set → ⚙️ Create new set...** / **Manage sets...**, or manually in `~/.config/cgoose/sets/`
 
-### Prompt persistence on resume
+### Prompt on resume
 
-`--system` is in-memory only (not stored in the session DB), so on resume cgoose:
-1. Looks up the *original* prompt in project meta `sessionPrompts[<session-name>]`
-2. Falls back to the current set's `systemPrompt` if no saved prompt exists (legacy sessions)
+Goose ≥ 1.55 persists `--system` in the session DB (`system_prompt_extras`), so on resume cgoose:
+1. Applies the **currently selected set's** `systemPrompt` via `--system` — edit the set, resume, get the fresh prompt
+2. Passes an explicit `--system ""` when **no set** is selected, so "no set" really means "no additional prompt". Omitting the flag would *restore* a previously stored prompt instead of clearing it
 
-This ensures a resumed session keeps its original instructions even if the set was later edited.
+There is no per-project prompt cache: the set, not a saved snapshot, defines the prompt.
 
 ## Git Worktree Integration
 

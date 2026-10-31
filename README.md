@@ -91,8 +91,8 @@ A **session set** is a JSON file at `~/.config/cgoose/sets/<name>.json` that bun
 - Session sets always launch via `goose session`, allowing session history, resume, and forks
 - Sets are discoverable, editable, and deletable via the TUI
 
-#### Prompt persistence on resume
-`--system` is in-memory only (not persisted in Goose's session DB), so cgoose saves the original prompt per-session in project meta (`sessionPrompts[<session-name>]`). On resume, the *original* prompt is passed again — even if the set definition was later edited. Legacy sessions with no saved prompt fall back to the current set definition.
+#### Prompt on resume
+The selected set is the source of truth for the system prompt. Goose ≥ 1.55 stores `--system` in the session DB (`system_prompt_extras`), so on resume cgoose applies the **current** set's prompt (edit the set → resume → fresh prompt). When **no set** is selected it passes an explicit `--system ""` to clear any previously stored prompt, since omitting the flag would restore the old one.
 
 **Why not recipes?**
 - Recipes use `goose run --recipe` which creates a one-shot session with no resume capability
@@ -149,7 +149,7 @@ The TUI still discovers installed recipes via `goose recipe list --format json`,
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
 - Sets `GOOSE_CONTEXT_LIMIT` from the provider's JSON model config
 - New session with a set: `--system`, `--with-builtin`, `--no-profile`
-- Resume passes saved original prompt via `--system`, skips `--with-builtin` (extensions are in session DB)
+- Resume applies the current set's prompt via `--system` (or `--system ""` when no set is selected), skips `--with-builtin` (extensions are in session DB)
 - Shows set in launch summary if one was selected
 - Spawns `goose session` with `stdio: inherit`, forwards exit code
 

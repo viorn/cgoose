@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
 import pc from "picocolors";
-import { writeProjectMeta, saveWorktreeMapping, saveSessionPrompt, getSessionPrompt } from "./project";
+import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
 import { readCgooseConfig, getSessionSet } from "./cgoose-config";
@@ -150,8 +150,6 @@ export function launchGoose(
     if (set) {
       if (set.systemPrompt) {
         args.push("--system", set.systemPrompt);
-        // Persist the original prompt for consistent resume behaviour
-        saveSessionPrompt(worktreeName, set.systemPrompt);
       }
 
       // Stdio extensions (e.g. "mcpls --trust-project-config")
@@ -168,36 +166,35 @@ export function launchGoose(
       }
     }
   } else {
-    // Resume — re-apply system prompt (--system is in-memory only, not
-    // persisted in session DB). Use the *original* prompt saved when the
-    // session was first created, so that even if the set definition changes
-    // later, the resumed session still gets its original instructions.
+    // Resume — the selected set is the source of truth for the system prompt.
+    // Goose >= 1.55 persists --system in the session DB (system_prompt_extras),
+    // so merely omitting --system RESTORES a previously stored prompt instead of
+    // clearing it. Pass an explicit empty value when no set is selected so that
+    // "no set" really means "no additional system prompt".
     args.push("session", "--resume", "--history");
     if (sessionName) {
       args.push("--name", sessionName);
     }
     args.push("--provider", effectiveProvider, "--model", model);
-
-    const originalPrompt = getSessionPrompt(worktreeName);
-    if (originalPrompt) {
-      args.push("--system", originalPrompt);
-    } else if (set?.systemPrompt) {
-      // Fallback: if no saved prompt yet, use current set's prompt
-      args.push("--system", set.systemPrompt);
-    }
+    args.push("--system", set?.systemPrompt ?? "");
   }
 
   // ─── Display summary ─────────────────────────────────────────────────────
   const setLine = set ? `\n  ${pc.dim("Set:")}      ${pc.green(set.title)}` : "";
-  console.log(
-    `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}
-  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}
-  ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}
-  ${pc.dim("Model:")}    ${pc.magenta(model)}${setLine}
-  ${worktreePath ? `${pc.dim("Workdir:")}  ${pc.cyan(worktreePath)}\n` : ""}
-  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}
-  `,
-  );
+  const summary = [
+    `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}`,
+    `  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}`,
+    `  ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}`,
+    `  ${pc.dim("Model:")}    ${pc.magenta(model)}${setLine}`,
+  ];
+  if (worktreePath) {
+    summary.push(`  ${pc.dim("Workdir:")}  ${pc.cyan(worktreePath)}`);
+  }
+  if (process.env.CGOOSE_DEBUG === "1") {
+    summary.push(`  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}`);
+  }
+  summary.push("");
+  console.log(summary.join("\n"));
 
   // ─── Spawn with optional cwd ───────────────────────────────────────────
   const spawnOpts: Record<string, unknown> = { stdio: "inherit", env: launchEnv };
