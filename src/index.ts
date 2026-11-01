@@ -37,7 +37,8 @@ import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./p
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 
-import { launchGoose } from "./launcher";
+import { launchGoose, DEFAULT_PROFILE_SENTINEL } from "./launcher";
+import { listGooseExtensions } from "./goose-extensions";
 import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -235,6 +236,27 @@ async function createSessionSetWizard(): Promise<string | null> {
 
   const builtins = (extNames as string[]).filter(Boolean);
 
+  // ── Step 5.5: Extensions already configured in Goose (config.yaml) ──────
+  // Sets are launched with --no-profile, so config.yaml extensions (like
+  // `fetch`) are not loaded unless they are referenced here by name.
+  const gooseExtensions = listGooseExtensions();
+  let chosenExtensions: string[] = [];
+  if (gooseExtensions.length > 0) {
+    log.info(pc.dim("These come from ~/.config/goose/config.yaml (sets run with --no-profile, so nothing else is loaded)."));
+    const extChoice = await multiselect({
+      message: "Goose-configured extensions to enable:",
+      options: gooseExtensions.map((e) => ({
+        value: e.key,
+        label: e.key,
+        hint: `${e.type}${e.enabled ? "" : " · disabled in config"}${e.description ? ` — ${e.description}` : ""}`,
+      })),
+      required: false,
+      initialValues: [],
+    });
+    if (isCancel(extChoice)) return null;
+    chosenExtensions = (extChoice as string[]).filter(Boolean);
+  }
+
   // ── Step 6: Stdio extensions (optional) ────────────────────────────────
   log.info(pc.dim("Stdio extensions are passed via --with-extension (e.g. 'mcpls --trust-project-config')." +
     "\nLeave empty to skip."));
@@ -257,6 +279,7 @@ async function createSessionSetWizard(): Promise<string | null> {
     description: (desc as string) || undefined,
     systemPrompt: (systemPrompt as string) || "",
     builtins,
+    extensions: chosenExtensions.length > 0 ? chosenExtensions : undefined,
     stdioExtensions: stdioExtensions.length > 0 ? stdioExtensions : undefined,
   };
 
@@ -577,23 +600,39 @@ async function main() {
         const setOptions: { label: string; value: string; hint?: string }[] = [];
 
         // 1) Last-used set — always at the very top
-        const lastSetObj = lastSet ? allSets[lastSet] : undefined;
+        const lastIsDefault = lastSet === DEFAULT_PROFILE_SENTINEL;
+        const lastSetObj = lastSet && !lastIsDefault ? allSets[lastSet] : undefined;
         if (lastSetObj) {
           setOptions.push({
             label: `${lastSetObj.title} ${pc.dim("←")}  ${pc.green("❶")}`,
             value: lastSetObj.name,
             hint: (lastSetObj.description || lastSetObj.name) + ` ${pc.dim("← last used")}`,
           });
+        } else if (lastIsDefault) {
+          setOptions.push({
+            label: `Default ${pc.dim("←")}  ${pc.green("❶")}`,
+            value: DEFAULT_PROFILE_SENTINEL,
+            hint: pc.dim("extensions from ~/.config/goose/config.yaml") + ` ${pc.dim("← last used")}`,
+          });
         }
 
-        // 2) "None" option
+        // 2) "None" option — no extensions at all (--no-profile, nothing else)
         setOptions.push({
           label: !lastSetObj && lastSet === ""
             ? pc.green("✦ None") + ` ${pc.dim("←")}`
             : "None",
           value: "",
-          hint: pc.dim("standard agent session"),
+          hint: pc.dim("no extensions at all"),
         });
+
+        // 2.5) "Default" pseudo-set — Goose's own profile from ~/.config/goose/config.yaml
+        if (!lastIsDefault) {
+          setOptions.push({
+            label: "Default",
+            value: DEFAULT_PROFILE_SENTINEL,
+            hint: pc.dim("extensions from ~/.config/goose/config.yaml"),
+          });
+        }
 
         // 3) Remaining sets sorted by history then alphabetical
         const sortedSets = Object.values(allSets)
@@ -624,7 +663,7 @@ async function main() {
         setOptions.push({
           label: pc.cyan("⚙️ Create new session set..."),
           value: "__create_set__",
-          hint: pc.dim("system prompt + builtin extensions"),
+          hint: pc.dim("system prompt + builtins/extensions"),
         });
 
         // 5) Manage sets
@@ -1068,11 +1107,15 @@ async function main() {
           : selectedProviderName;
         // Show set info
         const allSets = listSessionSets();
-        const setObj = selectedSet ? allSets[selectedSet] : undefined;
-        const displaySet = setObj ? setObj.title : pc.dim("none");
-        const setLine = selectedSet
-          ? `\n  ${pc.bold("Set")}:     ${pc.cyan(displaySet)}`
-          : "";
+        const setObj = selectedSet && selectedSet !== DEFAULT_PROFILE_SENTINEL
+          ? allSets[selectedSet]
+          : undefined;
+        const displaySet = setObj
+          ? setObj.title
+          : selectedSet === DEFAULT_PROFILE_SENTINEL
+            ? "Default (goose config.yaml)"
+            : "none (no extensions)";
+        const setLine = `\n  ${pc.bold("Set")}:     ${pc.cyan(displaySet)}`;
 
         outro(
           `${pc.green("✓")} Configuration complete:

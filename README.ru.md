@@ -75,21 +75,31 @@ bun start
 - **Пакетное удаление** — выбор по одной или очистка всех сессий для текущей директории
 
 ### Session Set'ы (замена рецептов)
-**Session set** — JSON-файл в `~/.config/cgoose/sets/<name>.json`, объединяющий:
+**Session set** — YAML-файл в `~/.config/cgoose/sets/<name>.yaml`, объединяющий:
 
-```json
-{
-  "title": "My Set",
-  "systemPrompt": "You are an expert in...",
-  "builtins": ["developer", "analyze", "memory"]
-}
+```yaml
+title: My Set
+systemPrompt: You are an expert in...
+builtins: [developer, analyze, memory]                # встроенные builtins Goose
+extensions: [fetch]                                   # расширения из ~/.config/goose/config.yaml
+stdioExtensions: ["mcpls --trust-project-config"]     # произвольные stdio-команды
 ```
 
 - **Системный промпт** передаётся через флаг `--system` (добавляется к дефолтному промпту Goose)
-- **Builtins** передаются через `--with-builtin` + `--no-profile` (набор полностью определяет тулсет)
+- **builtins** передаются через `--with-builtin`
+- **extensions** — имена расширений, уже настроенных в `~/.config/goose/config.yaml` (например `fetch`, `mcpls`, `sigma`). Каждая запись транслируется в нужный флаг: `builtin`/`platform` → `--with-builtin`, `stdio` → `--with-extension "name:cmd args"`, `streamable_http` → `--with-streamable-http-extension <uri>`
+- **stdioExtensions** — готовые командные строки, передаются напрямую в `--with-extension`
+- Сеты запускаются с `--no-profile`: загружается **только** то, что перечислено в сете
 - Создаёт **консистентные, воспроизводимые** конфигурации агентов — без сложности recipe YAML
 - Session set'ы всегда запускаются через `goose session`, что даёт историю сессий, resume и fork
 - Set'ы можно создавать, редактировать и удалять через TUI
+
+#### Выбор сета: None vs Default vs сет
+- **None** — вообще без расширений (`--no-profile` и больше ничего): голый агент без shell/файловых инструментов
+- **Default** — не трогаем профиль: Goose грузит все включённые расширения из `~/.config/goose/config.yaml` (классическое поведение `goose session`)
+- **&lt;сет&gt;** — ровно те builtins/расширения, что перечислены в сете
+
+Флаги расширений применяются только при **создании** сессии. При resume Goose восстанавливает набор расширений, сохранённый в БД сессии, и игнорирует флаги расширений — побеждает то, с чем сессия создавалась (системный промпт сета при этом всё равно применяется заново).
 
 #### Промпт при resume
 Выбранный set — источник истины для системного промпта. Goose ≥ 1.55 хранит `--system` в БД сессии (`system_prompt_extras`), поэтому при resume применяется промпт **текущего** set'а (изменил set → resume → свежий промпт). Если set не выбран, передаётся явный `--system ""`, чтобы очистить ранее сохранённый промпт — без этого флага старое значение вернётся.

@@ -14,7 +14,7 @@ cgoose is a TUI wrapper around `goose session` CLI. It launches Goose — it doe
 - **Session sets** (`~/.config/cgoose/sets/<name>.json`) replace recipes as the primary way to bundle a system prompt + builtin extensions. Recipes are still discovered via `goose recipe list --format json` but cgoose always launches via `goose session` (never `goose run --recipe`)
 - Set history tracked per-project (like provider/model history), last used shown at top
 - The selected **set is the source of truth** for the system prompt: on resume the *current* set's prompt is applied, and **None** explicitly clears any stored prompt via `--system ""` (Goose ≥1.55 persists `--system` in the session DB, so omitting the flag would restore the old prompt instead of clearing it)
-- On new session, set's system prompt is passed via `--system`, builtins via `--with-builtin` + `--no-profile`
+- On new session, set's system prompt is passed via `--system`, extensions via `--with-builtin` / `--with-extension` / `--with-streamable-http-extension` + `--no-profile`
 - Secrets resolved from: env vars → system keyring → `~/.config/goose/secrets.yaml` → JSON config files
 - Config file: `~/.config/cgoose/config.json` — supports `default_mode` (`"worktree"` or `"no-worktree"`)
 
@@ -35,19 +35,30 @@ If no project meta exists yet, first option is selected (None → first provider
 
 ## Session Sets
 
-A session set is a JSON file at `~/.config/cgoose/sets/<name>.json`:
+A session set is a YAML file at `~/.config/cgoose/sets/<name>.yaml` (legacy `.json` is still read):
 
-```json
-{
-  "title": "My Set",
-  "systemPrompt": "Instructions for the agent...",
-  "builtins": ["developer", "analyze", "memory"]
-}
+```yaml
+title: My Set
+systemPrompt: Instructions for the agent...
+builtins: [developer, analyze, memory]              # bundled Goose builtins
+extensions: [fetch]                                 # names from ~/.config/goose/config.yaml
+stdioExtensions: ["mcpls --trust-project-config"]   # raw --with-extension commands
 ```
 
-- `systemPrompt` → passed to Goose via `--system`
-- `builtins` → passed via `--with-builtin <comma,separated>` plus `--no-profile` (so the set fully defines the toolset)
+- `systemPrompt` → passed via `--system`
+- `builtins` → passed via `--with-builtin <comma,separated>`
+- `extensions` → names of extensions declared in `~/.config/goose/config.yaml`, resolved by `src/goose-extensions.ts`: `builtin`/`platform` → `--with-builtin`, `stdio` → `--with-extension "name:ENV=val cmd args..."`, `streamable_http` → `--with-streamable-http-extension "<uri> timeout=N"`. Unknown names produce a launcher warning and are skipped
+- `stdioExtensions` → passed verbatim to `--with-extension`
+- Any set (and `None`) is launched with `--no-profile`: only what the set lists is loaded
 - Created/managed via the TUI: **Set → ⚙️ Create new set...** / **Manage sets...**, or manually in `~/.config/cgoose/sets/`
+
+### "None" vs "Default" vs a set
+
+- **None** (`""`) → `--no-profile` only: a session with **no extensions at all**
+- **Default** (`__default__` sentinel in `src/launcher.ts`) → no flags at all, so Goose loads the profile from `~/.config/goose/config.yaml`
+- **Set** → exactly the flags derived from the set
+
+Extension flags are only effective when a session is **created**. On resume Goose restores the extension list stored in `sessions.extension_data` and ignores CLI extension flags; `setHistory[0]` may hold the `__default__` sentinel.
 
 ### Prompt on resume
 

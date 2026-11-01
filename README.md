@@ -75,21 +75,31 @@ bun start
 - **Batch delete** — pick individually or clean all sessions for the current directory
 
 ### Session Sets (replaces recipes)
-A **session set** is a JSON file at `~/.config/cgoose/sets/<name>.json` that bundles:
+A **session set** is a YAML file at `~/.config/cgoose/sets/<name>.yaml` that bundles:
 
-```json
-{
-  "title": "My Set",
-  "systemPrompt": "You are an expert in...",
-  "builtins": ["developer", "analyze", "memory"]
-}
+```yaml
+title: My Set
+systemPrompt: You are an expert in...
+builtins: [developer, analyze, memory]                # bundled Goose builtins
+extensions: [fetch]                                   # extensions from ~/.config/goose/config.yaml
+stdioExtensions: ["mcpls --trust-project-config"]     # ad-hoc stdio commands
 ```
 
 - **System prompt** passed via `--system` flag (appended to Goose's default prompt)
-- **Builtins** passed via `--with-builtin` + `--no-profile` (the set fully defines the toolset)
+- **builtins** passed via `--with-builtin`
+- **extensions** — names of extensions already configured in `~/.config/goose/config.yaml` (e.g. `fetch`, `mcpls`, `sigma`). Each entry is translated to the matching flag: `builtin`/`platform` → `--with-builtin`, `stdio` → `--with-extension "name:cmd args"`, `streamable_http` → `--with-streamable-http-extension <uri>`
+- **stdioExtensions** — raw command lines passed straight to `--with-extension`
+- Sets launch with `--no-profile`: **only** what the set lists is loaded
 - Creates **consistent, replayable** agent configurations — no recipe YAML complexity
 - Session sets always launch via `goose session`, allowing session history, resume, and forks
 - Sets are discoverable, editable, and deletable via the TUI
+
+#### Set choice: None vs Default vs a set
+- **None** — no extensions at all (`--no-profile` and nothing else): a bare agent without shell/file tools
+- **Default** — leave the profile alone: Goose loads every extension enabled in `~/.config/goose/config.yaml` (classic `goose session` behavior)
+- **&lt;set&gt;** — exactly the builtins/extensions the set lists
+
+Extension flags only apply when a session is **created**. On resume, Goose restores the extension set stored in the session DB and ignores CLI extension flags — how the session was first created wins (the set's system prompt is still re-applied).
 
 #### Prompt on resume
 The selected set is the source of truth for the system prompt. Goose ≥ 1.55 stores `--system` in the session DB (`system_prompt_extras`), so on resume cgoose applies the **current** set's prompt (edit the set → resume → fresh prompt). When **no set** is selected it passes an explicit `--system ""` to clear any previously stored prompt, since omitting the flag would restore the old one.

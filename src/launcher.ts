@@ -21,8 +21,15 @@ import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
 import { readCgooseConfig, getSessionSet } from "./cgoose-config";
+import { buildExtensionArgs } from "./goose-extensions";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
+
+/**
+ * Sentinel value for the "Default" pseudo-set: load Goose's default profile
+ * (i.e. the extensions enabled in ~/.config/goose/config.yaml).
+ */
+export const DEFAULT_PROFILE_SENTINEL = "__default__";
 
 export function launchGoose(
   sessionName: string,
@@ -32,13 +39,19 @@ export function launchGoose(
   /** Session's original name (from db), for worktree lookup on resume.
    *  On resume, sessionName is the UUID; this is the human-readable name. */
   sessionDisplayName?: string,
-  /** Optional session set name (defined in cgoose config). */
+  /**
+   * Optional session set name (defined in cgoose config).
+   * The special value DEFAULT_PROFILE_SENTINEL ("__default__") means
+   * "use Goose's default profile" (extensions from config.yaml);
+   * "" (none) means "load no extensions at all".
+   */
   sessionSet?: string,
 ): void {
   writeProjectMeta(providerInfo.name, model, sessionSet);
 
   // ─── Resolve session set ───────────────────────────────────────────────
-  const set = sessionSet ? getSessionSet(sessionSet) : undefined;
+  const useDefaultProfile = sessionSet === DEFAULT_PROFILE_SENTINEL;
+  const set = sessionSet && !useDefaultProfile ? getSessionSet(sessionSet) : undefined;
 
   // ─── Git worktree setup ────────────────────────────────────────────────
   let worktreePath: string | null = null;
@@ -146,24 +159,39 @@ export function launchGoose(
     }
     args.push("--provider", effectiveProvider, "--model", model);
 
-    // Session set: pass system prompt via --system, builtins via --with-builtin
+    // Session set: pass system prompt via --system, extensions via CLI flags
     if (set) {
       if (set.systemPrompt) {
         args.push("--system", set.systemPrompt);
       }
 
-      // Stdio extensions (e.g. "mcpls --trust-project-config")
-      if (set.stdioExtensions && set.stdioExtensions.length > 0) {
-        for (const ext of set.stdioExtensions) {
-          args.push("--with-extension", ext);
-        }
+      // Named extensions from ~/.config/goose/config.yaml (e.g. "fetch")
+      const extArgs = buildExtensionArgs(set.extensions ?? []);
+      for (const warning of extArgs.warnings) {
+        console.log(pc.yellow(`  ⚠ ${warning}`));
       }
 
-      if (set.builtins.length > 0) {
-        args.push("--with-builtin", set.builtins.join(","));
-        // Don't load default profile — the set defines exactly what we want
-        args.push("--no-profile");
+      // Builtins: those listed in the set + builtin/platform ones from config.yaml
+      const builtins = [...new Set([...set.builtins, ...extArgs.builtins])];
+      if (builtins.length > 0) {
+        args.push("--with-builtin", builtins.join(","));
       }
+
+      // Stdio extensions: explicit command lines from the set + config.yaml entries
+      for (const ext of [...(set.stdioExtensions ?? []), ...extArgs.stdio]) {
+        args.push("--with-extension", ext);
+      }
+
+      // Streamable HTTP extensions from config.yaml
+      for (const uri of extArgs.http) {
+        args.push("--with-streamable-http-extension", uri);
+      }
+
+      // Don't load default profile — the set defines exactly what we want
+      args.push("--no-profile");
+    } else if (!useDefaultProfile) {
+      // "None" — a truly bare session: no extensions at all
+      args.push("--no-profile");
     }
   } else {
     // Resume — the selected set is the source of truth for the system prompt.
@@ -171,6 +199,8 @@ export function launchGoose(
     // so merely omitting --system RESTORES a previously stored prompt instead of
     // clearing it. Pass an explicit empty value when no set is selected so that
     // "no set" really means "no additional system prompt".
+    // Note: Goose restores the extension set stored in the session DB on resume
+    // and ignores extension flags, so how the session was originally started wins.
     args.push("session", "--resume", "--history");
     if (sessionName) {
       args.push("--name", sessionName);
@@ -180,7 +210,12 @@ export function launchGoose(
   }
 
   // ─── Display summary ─────────────────────────────────────────────────────
-  const setLine = set ? `\n  ${pc.dim("Set:")}      ${pc.green(set.title)}` : "";
+  const setLabel = set
+    ? pc.green(set.title)
+    : useDefaultProfile
+      ? pc.green("Default") + pc.dim(" (goose config.yaml)")
+      : pc.dim("none (no extensions)");
+  const setLine = isNew ? `\n  ${pc.dim("Set:")}      ${setLabel}` : "";
   const summary = [
     `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}`,
     `  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}`,
