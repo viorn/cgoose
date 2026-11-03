@@ -363,21 +363,28 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       case "usage_update": {
         const cost = update.cost?.total ?? update.cost?.totalCost;
         const costStr = typeof cost === "number" ? ` · $${cost.toFixed(4)}` : "";
-        statusLine.setText(
-          pc.dim(`tokens ${update.used}/${update.size}${costStr}`),
-        );
-        tui.requestRender();
+        usagePart = `tokens ${update.used}/${update.size}${costStr}`;
+        renderStatus();
         break;
       }
       case "session_info_update": {
-        if (update.title) statusLine.setText(pc.dim(update.title));
-        tui.requestRender();
+        renderStatus();
         break;
       }
       default:
         break;
     }
   });
+
+  // Status line: provider/model + token usage (kept as parts so usage updates
+  // never wipe the model info).
+  let usagePart = "";
+  const renderStatus = (): void => {
+    statusLine.setText([pc.dim(`${opts.provider}/${opts.model}`), usagePart ? pc.dim(usagePart) : ""]
+      .filter(Boolean)
+      .join(pc.dim("  ")));
+    tui.requestRender();
+  };
 
   // ─── UI ───────────────────────────────────────────────────────────────────
 
@@ -490,6 +497,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   tui.start();
   tui.setFocus(editor);
+  renderStatus();
 
   // ─── Initialize + session setup ───────────────────────────────────────────
 
