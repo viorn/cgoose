@@ -5,6 +5,7 @@
  * → prompt (streaming) → session/load replay → extensions list.
  */
 
+import { readFileSync, writeFileSync } from "node:fs";
 import { AcpClient } from "../src/acp/client";
 import {
   listSessionExtensions,
@@ -30,11 +31,9 @@ async function main(): Promise<void> {
       Promise.resolve({ outcome: { outcome: "cancelled" as const } }),
     readTextFile: (p) => {
       // Minimal stand-in for the real fs handler used by the chat UI.
-      const { readFileSync } = require("node:fs");
       return Promise.resolve({ content: readFileSync(p.path, "utf-8") });
     },
     writeTextFile: (p) => {
-      const { writeFileSync } = require("node:fs");
       writeFileSync(p.path, p.content);
       return Promise.resolve();
     },
@@ -94,9 +93,11 @@ async function main(): Promise<void> {
     .map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`);
   console.log("constrained session extensions:", enabledNames.join(", ") || "(none)");
   const hasDeveloper = enabledNames.some((n: string) => n === "builtin:developer");
+  console.assert(hasDeveloper, "enabledExtensions should be applied");
   console.log(hasDeveloper
     ? "✅ enabledExtensions applied (developer present)"
     : "⚠ enabledExtensions NOT reflected — check goose version");
+  if (!hasDeveloper) process.exitCode = 1;
 
   // mcpServers (standard ACP field) is the other channel for stdio extensions.
   const mcpSession = await client.newSession({
@@ -108,9 +109,12 @@ async function main(): Promise<void> {
   const mcpExts = await listSessionExtensions(client, mcpSession.sessionId);
   const names = mcpExts.map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`);
   console.log("mcpServers session extensions:", names.join(", "));
-  console.log(names.some((n: string) => n === "mcp:probe-ext")
+  const mcpApplied = names.some((n: string) => n === "mcp:probe-ext");
+  console.assert(mcpApplied, "mcpServers should be applied");
+  console.log(mcpApplied
     ? "✅ mcpServers applied (probe-ext present)"
     : "⚠ mcpServers NOT reflected — stdio sets need another channel");
+  if (!mcpApplied) process.exitCode = 1;
 
   await client.stop();
   console.log("\n✅ smoke OK");

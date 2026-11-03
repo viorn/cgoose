@@ -19,6 +19,14 @@
  *   me   Edit mode without git worktree isolation
  *   we   Edit mode with worktree forced on
  *
+ * Chat mode (cgoose renders the dialog via `goose acp`):
+ *   c    Chat mode: full wizard, then the cgoose chat TUI
+ *   ac/ca  Chat + quick-resume last session
+ *   nc/cn  Chat + new session with last provider/model
+ *   sc/cs  Chat + session picker only
+ *   mc   Chat without git worktree isolation
+ *   wc   Chat with worktree forced on
+ *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
 

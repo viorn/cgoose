@@ -301,9 +301,33 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
   };
 
+  /** Close the current agent message block (a tool call splits the answer). */
+  const closeMessage = (): void => {
+    if (currentMd) {
+      flushStream(true);
+      currentMd = null;
+      streamBuffer = "";
+    }
+  };
+
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
   const flushStream = (force = false): void => {
+    if (force && flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
     const now = Date.now();
-    if (!force && now - lastFlush < 50) return;
+    if (!force && now - lastFlush < 50) {
+      // Trailing flush: guarantee the buffer is painted even when chunks
+      // arrive faster than the throttle window.
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushTimer = null;
+          flushStream(true);
+        }, 50);
+      }
+      return;
+    }
     lastFlush = now;
     if (currentMd) {
       currentMd.setText(streamBuffer || "…");
@@ -344,6 +368,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       case "tool_call":
       case "tool_call_update": {
         closeThought();
+        closeMessage();
         const existing = toolLines.get(update.toolCallId);
         const icon = STATUS_ICON[update.status ?? ""] ?? "🔨";
         const title = update.title ?? existing?.title ?? update.toolCallId;
@@ -426,11 +451,12 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       transcript.addChild(new Text(pc.red(`⚠ ${turnError}`), 1, 0));
     }
     // Reset per-turn buffers; rendered tool lines stay in the transcript
+    // (the Map is cleared when the next turn starts, not here — a cancelled
+    // turn should keep its already rendered tool lines).
     currentMd = null;
     streamBuffer = "";
     thoughtMd = null;
     thoughtBuffer = "";
-    toolLines.clear();
     tui.requestRender();
   };
 
@@ -444,6 +470,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     streamBuffer = "";
     thoughtMd = null;
     thoughtBuffer = "";
+    toolLines.clear();
     loader.setMessage("thinking…");
     loader.start();
     editor.disableSubmit = true;
@@ -487,6 +514,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   async function shutdown(): Promise<void> {
     if (exiting) return;
     exiting = true;
+    // Do not leave the agent waiting for a permission answer.
+    cancelPendingPermission?.();
     try {
       await client.stop();
     } finally {

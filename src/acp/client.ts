@@ -140,7 +140,8 @@ export class AcpClient {
       return;
     }
 
-    if ("id" in msg && ((msg as any).result !== undefined || (msg as any).error !== undefined)) {
+    // A response carries `result` or `error` (requests carry `method`).
+    if (("result" in msg || "error" in msg) && "id" in msg) {
       const entry = this.pending.get((msg as any).id);
       if (entry) {
         this.pending.delete((msg as any).id);
@@ -158,8 +159,11 @@ export class AcpClient {
     if ("method" in msg) {
       if ("id" in msg) {
         // Agent → client request; must be answered.
-        this.handleServerRequest(msg as any).catch(() => {
-          /* handler already sent an error response */
+        const requestMethod = (msg as any).method as string;
+        this.handleServerRequest(msg as any).catch((error) => {
+          // handleServerRequest responds on handler errors; a failure here
+          // means respond() itself failed — at least surface it.
+          this.opts.onStderr?.(`[acp] failed to answer ${requestMethod}: ${error}`);
         });
       } else {
         // Agent → client notification.
