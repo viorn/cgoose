@@ -1,0 +1,97 @@
+/**
+ * Goose custom ACP requests (`_goose/unstable/...`).
+ *
+ * Method names verified against goose 1.57.0 via scripts/acp-probe.ts and
+ * goose source: crates/goose-sdk-types/src/custom_requests.rs.
+ * These are version-sensitive — probe before relying on new ones.
+ */
+
+import type { AcpClient } from "./client";
+import type {
+  GooseExtension,
+  SetSessionSystemPromptRequest,
+  SessionExtensionEntry,
+} from "./types";
+
+export const GOOSE_METHODS = {
+  setSystemPrompt: "_goose/unstable/session/system-prompt/set",
+  addSessionExtension: "_goose/unstable/session/extensions/add",
+  removeSessionExtension: "_goose/unstable/session/extensions/remove",
+  listSessionExtensions: "_goose/unstable/session/extensions/list",
+  listConfigExtensions: "_goose/unstable/config/extensions/list",
+  renameSession: "_goose/unstable/session/rename",
+  archiveSession: "_goose/unstable/session/archive",
+  truncateConversation: "_goose/unstable/session/conversation/truncate",
+  sessionInfo: "_goose/unstable/session/info",
+  exportSession: "_goose/unstable/session/export",
+  updateWorkingDir: "_goose/unstable/session/working-dir/update",
+  steer: "_goose/unstable/session/steer",
+  contextReport: "_goose/unstable/context/report",
+  listProviders: "_goose/unstable/providers/list",
+  listProviderModels: "_goose/unstable/providers/supported-models/list",
+  readDefaults: "_goose/unstable/defaults/read",
+} as const;
+
+/** Set (mode="set") or append (mode="append") a system prompt for the session.
+ *  Empty `text` clears the entry for the given key/mode. */
+export async function setSessionSystemPrompt(
+  client: AcpClient,
+  sessionId: string,
+  opts: { mode?: "set" | "append"; key?: string; text: string },
+): Promise<void> {
+  const req: SetSessionSystemPromptRequest = {
+    sessionId,
+    mode: opts.mode ?? "append",
+    key: opts.key,
+    text: opts.text,
+  };
+  await client.request(GOOSE_METHODS.setSystemPrompt, req, 30_000);
+}
+
+export async function addSessionExtension(
+  client: AcpClient,
+  sessionId: string,
+  extension: GooseExtension,
+): Promise<void> {
+  await client.request(GOOSE_METHODS.addSessionExtension, { sessionId, extension }, 30_000);
+}
+
+export async function removeSessionExtension(
+  client: AcpClient,
+  sessionId: string,
+  extensionKey: string,
+): Promise<void> {
+  await client.request(GOOSE_METHODS.removeSessionExtension, { sessionId, extensionKey }, 30_000);
+}
+
+export async function listSessionExtensions(
+  client: AcpClient,
+  sessionId: string,
+): Promise<SessionExtensionEntry[]> {
+  const result = (await client.request(
+    GOOSE_METHODS.listSessionExtensions,
+    { sessionId },
+    30_000,
+  )) as { extensions?: SessionExtensionEntry[] };
+  return result.extensions ?? [];
+}
+
+export async function renameSession(
+  client: AcpClient,
+  sessionId: string,
+  title: string,
+): Promise<void> {
+  await client.request(GOOSE_METHODS.renameSession, { sessionId, title }, 30_000);
+}
+
+export async function truncateSessionConversation(
+  client: AcpClient,
+  sessionId: string,
+  truncateFrom: number,
+): Promise<void> {
+  await client.request(
+    GOOSE_METHODS.truncateConversation,
+    { sessionId, truncateFrom },
+    30_000,
+  );
+}

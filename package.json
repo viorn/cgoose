@@ -1,19 +1,23 @@
 {
   "name": "cgoose",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "TUI for Goose AI sessions - session manager with provider/model selection",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "check": "tsc -p tsconfig.json",
+    "acp:probe": "bun scripts/acp-probe.ts",
+    "acp:smoke": "bun scripts/acp-client-smoke.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
+    "@earendil-works/pi-tui": "^1.5.0",
     "js-yaml": "^5.4.1",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.1",
+    "@types/node": "^26.6.6",
     "typescript": "^5.7.3",
     "typescript-language-server": "^6.0.0"
   }

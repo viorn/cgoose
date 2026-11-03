@@ -1,12 +1,18 @@
 /**
- * Launch Goose with session name, provider, model, and optional session set.
+ * Launch Goose: classic TUI mode (`goose session`) or cgoose chat mode
+ * (`goose acp` + own TUI).
  *
- * Always uses `goose session` (never `goose run --recipe`).
+ * Classic mode always uses `goose session` (never `goose run --recipe`).
  * Session sets (system prompt + extensions) are applied via:
  *   - Extensions → CLI flags (--with-builtin, --with-extension)
  *   - System prompt → --system flag
  *
- * Git worktree integration:
+ * Chat (ACP) mode spawns `goose acp`, negotiates the Agent Client Protocol
+ * over stdio and renders the dialog itself (src/acp/chat.ts). Session sets are
+ * applied via `_meta.goose.enabledExtensions` on `session/new` and the goose
+ * custom request `_goose/unstable/session/system-prompt/set`.
+ *
+ * Git worktree integration (both modes):
  * - New sessions create a git worktree (<repo-root>/.worktree/<name>) and launch Goose there
  * - Resuming existing sessions check for an existing worktree and launch there if found
  * - Skips worktree creation if not in a git repo or CGOOSE_NO_WORKTREE=1 is set
@@ -21,9 +27,11 @@ import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
 import { readCgooseConfig, getSessionSet } from "./cgoose-config";
+import type { SessionSet } from "./cgoose-config";
 import { buildExtensionArgs } from "./goose-extensions";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
 import { getCurrentDirName, generateSessionName } from "./utils";
+import { runAcpChat } from "./acp/chat";
 
 /**
  * Sentinel value for the "Default" pseudo-set: load Goose's default profile
@@ -31,25 +39,36 @@ import { getCurrentDirName, generateSessionName } from "./utils";
  */
 export const DEFAULT_PROFILE_SENTINEL = "__default__";
 
-export function launchGoose(
+// ─── Shared launch preparation ───────────────────────────────────────────────
+
+export interface PreparedLaunch {
+  /** Resolved session set, or undefined for None / Default. */
+  set: SessionSet | undefined;
+  useDefaultProfile: boolean;
+  /** Worktree directory to run in, if any. */
+  worktreePath: string | null;
+  /** Stable worktree/branch name. */
+  worktreeName: string;
+  /** Environment for the goose process (config secrets, provider, context limit). */
+  launchEnv: Record<string, string>;
+}
+
+/**
+ * Everything both launch modes need before spawning: project meta, worktree,
+ * `.goose/config.yaml` secrets, custom-provider env and context limit.
+ */
+export function prepareLaunch(
   sessionName: string,
   providerInfo: ProviderInfo,
   model: string,
   isNew: boolean,
-  /** Session's original name (from db), for worktree lookup on resume.
-   *  On resume, sessionName is the UUID; this is the human-readable name. */
+  /** Session's original name (from db), for worktree lookup on resume. */
   sessionDisplayName?: string,
-  /**
-   * Optional session set name (defined in cgoose config).
-   * The special value DEFAULT_PROFILE_SENTINEL ("__default__") means
-   * "use Goose's default profile" (extensions from config.yaml);
-   * "" (none) means "load no extensions at all".
-   */
+  /** Session set name; see DEFAULT_PROFILE_SENTINEL and "" (None). */
   sessionSet?: string,
-): void {
+): PreparedLaunch {
   writeProjectMeta(providerInfo.name, model, sessionSet);
 
-  // ─── Resolve session set ───────────────────────────────────────────────
   const useDefaultProfile = sessionSet === DEFAULT_PROFILE_SENTINEL;
   const set = sessionSet && !useDefaultProfile ? getSessionSet(sessionSet) : undefined;
 
@@ -57,7 +76,6 @@ export function launchGoose(
   let worktreePath: string | null = null;
   const forceWorktree = process.env.CGOOSE_FORCE_WORKTREE === "1";
 
-  // Check cgoose config for default mode if no env var is explicitly set
   if (!forceWorktree && process.env.CGOOSE_NO_WORKTREE === undefined) {
     const cgooseConfig = readCgooseConfig();
     if (cgooseConfig.default_mode === "no-worktree") {
@@ -66,12 +84,10 @@ export function launchGoose(
   }
   const noWorktree = forceWorktree ? false : process.env.CGOOSE_NO_WORKTREE === "1";
 
-  // Use the display name for worktree (stable across creates and resumes)
   const worktreeName = sessionDisplayName || sessionName || generateSessionName(getCurrentDirName());
 
   if (!noWorktree && isInsideGitRepo()) {
     if (isNew) {
-      // Create a new worktree for this session
       worktreePath = createWorktree(worktreeName);
       if (worktreePath) {
         console.log(pc.dim(`  📂 Worktree: ${pc.cyan(worktreePath)}`));
@@ -79,7 +95,6 @@ export function launchGoose(
         saveWorktreeMapping(worktreeName, worktreePath);
       }
     } else {
-      // Resuming — find existing worktree by the session's original name
       worktreePath = getSessionWorktreePath(worktreeName);
       if (worktreePath) {
         console.log(pc.dim(`  📂 Resuming worktree: ${pc.cyan(worktreePath)}`));
@@ -88,7 +103,6 @@ export function launchGoose(
   }
 
   // ─── Provider env setup ──────────────────────────────────────────────────
-  const effectiveProvider = providerInfo.name;
   const launchEnv: Record<string, string> = { ...process.env as Record<string, string> };
 
   // ─── Goose additional config ────────────────────────────────────────────
@@ -105,7 +119,6 @@ export function launchGoose(
       const secrets = getGooseSecrets();
       if (Object.keys(secrets).length > 0) {
         const raw = readFileSync(configPath, "utf-8");
-        // Find all $KEY or ${KEY} references in YAML values
         const envRefRegex = /\$\{?(\w+)\}?/g;
         const foundKeys = new Set<string>();
         for (const line of raw.split("\n")) {
@@ -115,7 +128,6 @@ export function launchGoose(
           if (colonIdx === -1) continue;
           const value = trimmed.slice(colonIdx + 1).trim();
           if (!value) continue;
-          // Match env var references in the value
           let match;
           while ((match = envRefRegex.exec(value)) !== null) {
             foundKeys.add(match[1]);
@@ -149,7 +161,53 @@ export function launchGoose(
     }
   }
 
-  // ─── Build args — always `goose session` ─────────────────────────────────
+  return { set, useDefaultProfile, worktreePath, worktreeName, launchEnv };
+}
+
+/** Shared launch summary lines (both modes print the same shape). */
+function printSummary(
+  sessionName: string,
+  providerInfo: ProviderInfo,
+  model: string,
+  prepared: PreparedLaunch,
+  extra: string[] = [],
+): void {
+  const setLabel = prepared.set
+    ? pc.green(prepared.set.title)
+    : prepared.useDefaultProfile
+      ? pc.green("Default") + pc.dim(" (goose config.yaml)")
+      : pc.dim("none (no extensions)");
+  const setLine = `\n  ${pc.dim("Set:")}      ${setLabel}`;
+  const summary = [
+    `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}`,
+    `  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}`,
+    `  ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}`,
+    `  ${pc.dim("Model:")}    ${pc.magenta(model)}${setLine}`,
+    ...extra,
+  ];
+  if (prepared.worktreePath) {
+    summary.push(`  ${pc.dim("Workdir:")}  ${pc.cyan(prepared.worktreePath)}`);
+  }
+  summary.push("");
+  console.log(summary.join("\n"));
+}
+
+// ─── Classic mode: spawn `goose session` TUI ─────────────────────────────────
+
+export function launchGoose(
+  sessionName: string,
+  providerInfo: ProviderInfo,
+  model: string,
+  isNew: boolean,
+  /** Session's original name (from db), for worktree lookup on resume.
+   *  On resume, sessionName is the UUID; this is the human-readable name. */
+  sessionDisplayName?: string,
+  /** Session set name; see DEFAULT_PROFILE_SENTINEL and "" (None). */
+  sessionSet?: string,
+): void {
+  const prepared = prepareLaunch(sessionName, providerInfo, model, isNew, sessionDisplayName, sessionSet);
+  const { set, useDefaultProfile } = prepared;
+
   const args: string[] = [];
 
   if (isNew) {
@@ -157,40 +215,33 @@ export function launchGoose(
     if (sessionName) {
       args.push("--name", sessionName);
     }
-    args.push("--provider", effectiveProvider, "--model", model);
+    args.push("--provider", providerInfo.name, "--model", model);
 
-    // Session set: pass system prompt via --system, extensions via CLI flags
     if (set) {
       if (set.systemPrompt) {
         args.push("--system", set.systemPrompt);
       }
 
-      // Named extensions from ~/.config/goose/config.yaml (e.g. "fetch")
       const extArgs = buildExtensionArgs(set.extensions ?? []);
       for (const warning of extArgs.warnings) {
         console.log(pc.yellow(`  ⚠ ${warning}`));
       }
 
-      // Builtins: those listed in the set + builtin/platform ones from config.yaml
       const builtins = [...new Set([...set.builtins, ...extArgs.builtins])];
       if (builtins.length > 0) {
         args.push("--with-builtin", builtins.join(","));
       }
 
-      // Stdio extensions: explicit command lines from the set + config.yaml entries
       for (const ext of [...(set.stdioExtensions ?? []), ...extArgs.stdio]) {
         args.push("--with-extension", ext);
       }
 
-      // Streamable HTTP extensions from config.yaml
       for (const uri of extArgs.http) {
         args.push("--with-streamable-http-extension", uri);
       }
 
-      // Don't load default profile — the set defines exactly what we want
       args.push("--no-profile");
     } else if (!useDefaultProfile) {
-      // "None" — a truly bare session: no extensions at all
       args.push("--no-profile");
     }
   } else {
@@ -205,44 +256,83 @@ export function launchGoose(
     if (sessionName) {
       args.push("--name", sessionName);
     }
-    args.push("--provider", effectiveProvider, "--model", model);
+    args.push("--provider", providerInfo.name, "--model", model);
     args.push("--system", set?.systemPrompt ?? "");
   }
 
-  // ─── Display summary ─────────────────────────────────────────────────────
-  const setLabel = set
-    ? pc.green(set.title)
-    : useDefaultProfile
-      ? pc.green("Default") + pc.dim(" (goose config.yaml)")
-      : pc.dim("none (no extensions)");
-  const setLine = isNew ? `\n  ${pc.dim("Set:")}      ${setLabel}` : "";
-  const summary = [
-    `\n${pc.green("🚀")} ${pc.bold("Launching Goose...")}`,
-    `  ${pc.dim("Session:")}  ${pc.cyan(sessionName)}`,
-    `  ${pc.dim("Provider:")} ${pc.yellow(providerInfo.name)}`,
-    `  ${pc.dim("Model:")}    ${pc.magenta(model)}${setLine}`,
-  ];
-  if (worktreePath) {
-    summary.push(`  ${pc.dim("Workdir:")}  ${pc.cyan(worktreePath)}`);
-  }
-  if (process.env.CGOOSE_DEBUG === "1") {
-    summary.push(`  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}`);
-  }
-  summary.push("");
-  console.log(summary.join("\n"));
+  printSummary(sessionName, providerInfo, model, prepared, [
+    ...(process.env.CGOOSE_DEBUG === "1"
+      ? [`  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}`]
+      : []),
+  ]);
 
-  // ─── Spawn with optional cwd ───────────────────────────────────────────
-  const spawnOpts: Record<string, unknown> = { stdio: "inherit", env: launchEnv };
-  if (worktreePath) {
-    spawnOpts.cwd = worktreePath;
+  const spawnOpts: Record<string, unknown> = { stdio: "inherit", env: prepared.launchEnv };
+  if (prepared.worktreePath) {
+    spawnOpts.cwd = prepared.worktreePath;
   }
 
-  // Return a promise so the caller can await exit if needed.
-  // The function type is `void` for backwards compatibility with callers
-  // that don't use the promise.
   // Spawn goose; we intentionally don't await — the child process takes over the terminal.
   const child = spawn("goose", args, spawnOpts as any);
   child.on("exit", () => {
     /* goose exited */
+  });
+}
+
+// ─── Chat mode: `goose acp` + own TUI ────────────────────────────────────────
+
+export interface AcpLaunchOptions {
+  sessionName: string;
+  providerInfo: ProviderInfo;
+  model: string;
+  isNew: boolean;
+  /** On resume: the goose session id (from sessions.db) to load. */
+  resumeSessionId?: string;
+  sessionDisplayName?: string;
+  sessionSet?: string;
+}
+
+/**
+ * Chat mode: run goose as an ACP agent and render the conversation with the
+ * pi-tui based chat UI (src/acp/chat.ts). Resolves when the chat is closed.
+ */
+export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
+  const prepared = prepareLaunch(
+    opts.sessionName,
+    opts.providerInfo,
+    opts.model,
+    opts.isNew,
+    opts.sessionDisplayName,
+    opts.sessionSet,
+  );
+
+  // Builtins go on the agent command line (--with-builtin a,b); stdio/http
+  // extensions are attached per-session via `_meta.goose.enabledExtensions`.
+  const set = prepared.set;
+  const extArgs = set ? buildExtensionArgs(set.extensions ?? []) : { builtins: [], stdio: [], http: [], warnings: [] };
+  for (const warning of extArgs.warnings) {
+    console.log(pc.yellow(`  ⚠ ${warning}`));
+  }
+  const agentBuiltins = set
+    ? [...new Set([...set.builtins, ...extArgs.builtins])]
+    : [];
+
+  printSummary(opts.sessionName, opts.providerInfo, opts.model, prepared, [
+    ...(process.env.CGOOSE_DEBUG === "1"
+      ? [`  ${pc.dim("Command:")}  ${pc.dim(`goose acp --with-builtin ${agentBuiltins.join(",") || "-"}`)}`]
+      : []),
+  ]);
+
+  await runAcpChat({
+    cwd: prepared.worktreePath ?? process.cwd(),
+    env: prepared.launchEnv,
+    isNew: opts.isNew,
+    resumeSessionId: opts.resumeSessionId,
+    sessionTitle: opts.sessionName || undefined,
+    provider: opts.providerInfo.name,
+    model: opts.model,
+    set,
+    agentBuiltins,
+    stdioExtensionSpecs: set ? [...(set.stdioExtensions ?? []), ...extArgs.stdio] : [],
+    httpExtensionUris: extArgs.http,
   });
 }

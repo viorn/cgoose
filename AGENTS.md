@@ -84,6 +84,32 @@ Control:
 - `-w` CLI flag enables worktree
 - Config `~/.config/cgoose/config.json`: `{ "default_mode": "worktree" }` — override default to worktree mode
 
+## Chat Mode (ACP)
+
+Besides the classic mode (spawning the `goose session` TUI), cgoose has a **chat mode**
+where cgoose itself renders the dialog. It spawns `goose acp` (Agent Client Protocol,
+JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/pi-tui`.
+
+- CLI flag: `-c` (and pairs `mc` = no worktree, `wc` = force worktree, `ac`/`nc`/`sc`/`ca`/`cn`/`cs`)
+- Implementation: `src/acp/` — `client.ts` (transport), `custom.ts` (goose custom
+  requests, methods `_goose/unstable/...`), `chat.ts` (pi-tui based chat UI)
+- Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
+  env, secrets) is `prepareLaunch()`, used by both modes
+- Session sets in chat mode:
+  - extensions → `_meta.goose.enabledExtensions` on `session/new` (builtin/platform/mcp
+    entries; absent → goose default profile, empty list → no extensions at all)
+  - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
+    (`mode: "set"`, key `cgoose`); empty text clears it — same "set is the source of
+    truth" semantics as classic `--system`
+- ACP sessions live in the same `sessions.db`, so the wizard's session picker sees them;
+  resume uses `session/load` (full history replay, pending permissions are re-asked)
+- Permissions (`session/request_permission`) are rendered as a SelectList overlay;
+  Esc/Ctrl+C during a turn sends `session/cancel`
+- Requires goose ≥ ~1.57 (`goose acp` + `_goose/unstable/*` methods); classic mode is
+  the fallback on older versions
+- Verification scripts: `bun scripts/acp-probe.ts` (raw protocol) and
+  `bun scripts/acp-client-smoke.ts` (src/acp/client.ts without the TUI)
+
 ## Data Paths
 
 | What | Path |

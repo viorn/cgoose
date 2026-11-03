@@ -37,7 +37,7 @@ import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./p
 import { getAllSessions, deleteSessionById, formatSessionHint, type GooseSession } from "./sessions";
 import { detectOllama, fetchModelsFromApi, type OllamaModelInfo, type ApiModelInfo } from "./models";
 
-import { launchGoose, DEFAULT_PROFILE_SENTINEL } from "./launcher";
+import { launchGoose, launchGooseAcp, DEFAULT_PROFILE_SENTINEL } from "./launcher";
 import { listGooseExtensions } from "./goose-extensions";
 import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWorktree } from "./worktree";
 
@@ -367,7 +367,9 @@ async function main() {
   let lastAllSessions: GooseSession[] = [];
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
-  const args = process.argv.slice(2);
+  // Flags are single-letter, tmux-style: `cgoose mn`, `cgoose wc`. Leading
+  // dashes are stripped so `cgoose -mn` works too.
+  const args = process.argv.slice(2).map((a) => a.replace(/^-+/, ""));
 
   // Detect worktree force flag (w, wa, ws, wn) — overrides CGOOSE_NO_WORKTREE
   const forceWorktree = args.includes("w") || args.includes("wa") || args.includes("ws") || args.includes("wn");
@@ -379,10 +381,26 @@ async function main() {
   // Detect "fork" mode (e) — edit/fork existing sessions
   const isEditMode = args.includes("e") || args.includes("me") || args.includes("we");
 
+  // Detect chat mode (c) — run `goose acp` and render the dialog ourselves
+  const isChatMode = args.includes("c") || args.includes("mc") || args.includes("wc")
+    || args.includes("ac") || args.includes("nc") || args.includes("sc")
+    || args.includes("ca") || args.includes("cn") || args.includes("cs");
+
   // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
   let noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
   if (noWorktree) {
     process.env.CGOOSE_NO_WORKTREE = "1";
+  }
+
+  // Chat-mode worktree pairing: mc = no worktree, wc = force worktree
+  if (args.includes("mc")) {
+    process.env.CGOOSE_NO_WORKTREE = "1";
+    noWorktree = true;
+  }
+  if (args.includes("wc")) {
+    process.env.CGOOSE_FORCE_WORKTREE = "1";
+    delete process.env.CGOOSE_NO_WORKTREE;
+    noWorktree = false;
   }
 
   // If no explicit CLI override, check cgoose config for default mode
@@ -1131,6 +1149,18 @@ async function main() {
           continue;
         }
 
+        if (isChatMode) {
+          await launchGooseAcp({
+            sessionName: isNewSession ? sessionName : resolvedSessionName,
+            providerInfo: providerCfg,
+            model: modelValue,
+            isNew: isNewSession,
+            resumeSessionId: isNewSession ? undefined : sessionName,
+            sessionDisplayName: resolvedSessionName,
+            sessionSet: selectedSet,
+          });
+          return; // chat closed
+        }
         launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName, selectedSet);
         return; // never reached — launchGoose replaces process
       }

@@ -158,7 +158,7 @@ export async function createCustomProviderWizard(): Promise<CreatedProvider | nu
 
   let apiKey = "";
   if (requiresAuth) {
-    apiKey = await password({
+    const result = await password({
       message: "API key:",
       mask: "▪",
       validate: (val) => {
@@ -167,7 +167,8 @@ export async function createCustomProviderWizard(): Promise<CreatedProvider | nu
       },
     });
 
-    if (isCancel(apiKey)) return null;
+    if (isCancel(result) || typeof result !== "string") return null;
+    apiKey = result;
   }
 
   // ── Step 5: models (skipped — handled on model selection step) ────────
