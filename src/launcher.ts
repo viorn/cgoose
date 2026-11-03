@@ -18,7 +18,7 @@
  * - Skips worktree creation if not in a git repo or CGOOSE_NO_WORKTREE=1 is set
  */
 
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
@@ -291,11 +291,33 @@ export interface AcpLaunchOptions {
   sessionSet?: string;
 }
 
+/** Check that the installed goose supports the `acp` subcommand. */
+function gooseAcpSupported(): boolean {
+  try {
+    execSync("goose acp --help", {
+      encoding: "utf-8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Chat mode: run goose as an ACP agent and render the conversation with the
  * pi-tui based chat UI (src/acp/chat.ts). Resolves when the chat is closed.
+ * Falls back to the classic `goose session` TUI when the installed goose has
+ * no `acp` subcommand.
  */
 export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
+  if (!gooseAcpSupported()) {
+    console.log(pc.yellow("  ⚠ Installed goose has no `acp` subcommand — falling back to classic TUI"));
+    launchGoose(opts.sessionName, opts.providerInfo, opts.model, opts.isNew, opts.sessionDisplayName, opts.sessionSet);
+    return;
+  }
+
   const prepared = prepareLaunch(
     opts.sessionName,
     opts.providerInfo,
@@ -305,8 +327,14 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
     opts.sessionSet,
   );
 
-  // Builtins go on the agent command line (--with-builtin a,b); stdio/http
-  // extensions are attached per-session via `_meta.goose.enabledExtensions`.
+  // Provider/model selection must reach the ACP agent: goose reads these env
+  // vars when resolving the session's provider and model.
+  prepared.launchEnv["GOOSE_PROVIDER"] = opts.providerInfo.name;
+  prepared.launchEnv["GOOSE_MODEL"] = opts.model;
+
+  // Extensions travel per-session via `_meta.goose.enabledExtensions` on
+  // `session/new` (builtin/platform/mcp entries); nothing is passed on the
+  // agent command line.
   const set = prepared.set;
   const extArgs = set ? buildExtensionArgs(set.extensions ?? []) : { builtins: [], stdio: [], http: [], warnings: [] };
   for (const warning of extArgs.warnings) {
@@ -318,7 +346,7 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
 
   printSummary(opts.sessionName, opts.providerInfo, opts.model, prepared, [
     ...(process.env.CGOOSE_DEBUG === "1"
-      ? [`  ${pc.dim("Command:")}  ${pc.dim(`goose acp --with-builtin ${agentBuiltins.join(",") || "-"}`)}`]
+      ? [`  ${pc.dim("Command:")}  ${pc.dim("goose acp")}`]
       : []),
   ]);
 
@@ -331,6 +359,7 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
     provider: opts.providerInfo.name,
     model: opts.model,
     set,
+    useDefaultProfile: prepared.useDefaultProfile,
     agentBuiltins,
     stdioExtensionSpecs: set ? [...(set.stdioExtensions ?? []), ...extArgs.stdio] : [],
     httpExtensionUris: extArgs.http,

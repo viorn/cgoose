@@ -75,6 +75,43 @@ async function main(): Promise<void> {
   const exts = await listSessionExtensions(client, session.sessionId);
   console.log("extensions:", exts.map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`).join(", "));
 
+  // enabledExtensions must actually reach the session: create one with a
+  // single builtin and verify it is the only enabled extension.
+  const constrained = await client.newSession({
+    cwd: process.cwd(),
+    mcpServers: [],
+    _meta: {
+      goose: {
+        client: "cgoose",
+        sessionTitle: "acp-client-smoke-ext",
+        enabledExtensions: [{ type: "builtin", name: "developer" }],
+      },
+    },
+  });
+  const constrainedExts = await listSessionExtensions(client, constrained.sessionId);
+  const enabledNames = constrainedExts
+    .filter((e: any) => e.enabled !== false)
+    .map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`);
+  console.log("constrained session extensions:", enabledNames.join(", ") || "(none)");
+  const hasDeveloper = enabledNames.some((n: string) => n === "builtin:developer");
+  console.log(hasDeveloper
+    ? "✅ enabledExtensions applied (developer present)"
+    : "⚠ enabledExtensions NOT reflected — check goose version");
+
+  // mcpServers (standard ACP field) is the other channel for stdio extensions.
+  const mcpSession = await client.newSession({
+    cwd: process.cwd(),
+    mcpServers: [
+      { type: "stdio", name: "probe-ext", command: "echo", args: ["hi"], env: [] },
+    ],
+  });
+  const mcpExts = await listSessionExtensions(client, mcpSession.sessionId);
+  const names = mcpExts.map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`);
+  console.log("mcpServers session extensions:", names.join(", "));
+  console.log(names.some((n: string) => n === "mcp:probe-ext")
+    ? "✅ mcpServers applied (probe-ext present)"
+    : "⚠ mcpServers NOT reflected — stdio sets need another channel");
+
   await client.stop();
   console.log("\n✅ smoke OK");
 }

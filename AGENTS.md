@@ -95,20 +95,28 @@ JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/p
   requests, methods `_goose/unstable/...`), `chat.ts` (pi-tui based chat UI)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
-- Session sets in chat mode:
-  - extensions → `_meta.goose.enabledExtensions` on `session/new` (builtin/platform/mcp
-    entries; absent → goose default profile, empty list → no extensions at all)
+- Session sets in chat mode (channels verified on goose 1.57 via `acp-client-smoke`):
+  - builtins → `goose acp --with-builtin <names>` on the agent command line
+  - stdio/streamable-http extensions → standard ACP `mcpServers` on `session/new`
+    (works on 1.57, additive to the profile)
+  - `_meta.goose.enabledExtensions` is sent as well, but goose 1.57 ignores it —
+    on this version the default profile always loads, so the None set cannot hide
+    profile extensions (a warning is printed in the chat)
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
     (`mode: "set"`, key `cgoose`); empty text clears it — same "set is the source of
     truth" semantics as classic `--system`
 - ACP sessions live in the same `sessions.db`, so the wizard's session picker sees them;
-  resume uses `session/load` (full history replay, pending permissions are re-asked)
+  resume uses `session/load` (requires the agent's `loadSession` capability, checked at
+  startup; goose replays pending permissions from the stored conversation)
 - Permissions (`session/request_permission`) are rendered as a SelectList overlay;
-  Esc/Ctrl+C during a turn sends `session/cancel`
-- Requires goose ≥ ~1.57 (`goose acp` + `_goose/unstable/*` methods); classic mode is
-  the fallback on older versions
+  Esc/Ctrl+C during a turn sends `session/cancel`, while the overlay is open they
+  belong to the list (reject that tool call)
+- Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.goose.provider`
+- Requires goose ≥ ~1.57 (`goose acp` + `_goose/unstable/*` methods); `launchGooseAcp`
+  checks `goose acp --help` at startup and falls back to the classic TUI otherwise
 - Verification scripts: `bun scripts/acp-probe.ts` (raw protocol) and
-  `bun scripts/acp-client-smoke.ts` (src/acp/client.ts without the TUI)
+  `bun scripts/acp-client-smoke.ts` (src/acp/client.ts without the TUI; includes an
+  `enabledExtensions` round-trip check)
 
 ## Data Paths
 

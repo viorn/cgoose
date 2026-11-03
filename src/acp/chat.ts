@@ -13,7 +13,8 @@
  * the *current* set's prompt is re-applied (or explicitly cleared when no set).
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import pc from "picocolors";
 import {
   Container,
@@ -54,6 +55,8 @@ export interface AcpChatOptions {
   model: string;
   /** Resolved session set (undefined = None / Default). */
   set?: SessionSet;
+  /** True when no set means "load goose's default profile" (`__default__`). */
+  useDefaultProfile: boolean;
   /** Builtin names resolved from the set + goose config.yaml. */
   agentBuiltins: string[];
   /** Raw stdio extension specs (`name:ENV=val cmd args...`) from the set. */
@@ -134,8 +137,12 @@ function parseHttpSpec(spec: string): GooseExtension | null {
 }
 
 function buildEnabledExtensions(opts: AcpChatOptions): GooseExtension[] | undefined {
-  // undefined → goose loads its default profile (config.yaml) — "Default" set.
-  if (!opts.set) return undefined;
+  // No set:
+  //  - Default (`__default__`) → undefined → goose loads its default profile
+  //  - None ("") → [] → ask for a session with no extensions
+  // Note: goose 1.57 ignores this field (verified via acp-client-smoke); kept
+  // for newer goose versions where it replaces the default profile.
+  if (!opts.set) return opts.useDefaultProfile ? undefined : [];
   const result: GooseExtension[] = [];
   for (const name of opts.agentBuiltins) {
     result.push({ type: "builtin", name });
@@ -148,8 +155,22 @@ function buildEnabledExtensions(opts: AcpChatOptions): GooseExtension[] | undefi
     const ext = parseHttpSpec(spec);
     if (ext) result.push(ext);
   }
-  // Empty list = "None" set: a session with no extensions at all.
   return result;
+}
+
+/** MCP servers for the standard ACP `session/new.mcpServers` field — the one
+ *  channel verified to work on goose 1.57 for stdio/http extensions. */
+function buildMcpServers(opts: AcpChatOptions): unknown[] {
+  const servers: unknown[] = [];
+  for (const spec of opts.stdioExtensionSpecs) {
+    const ext = parseStdioSpec(spec);
+    if (ext?.type === "mcp") servers.push(ext.server);
+  }
+  for (const spec of opts.httpExtensionUris) {
+    const ext = parseHttpSpec(spec);
+    if (ext?.type === "mcp") servers.push(ext.server);
+  }
+  return servers;
 }
 
 // ─── Chat session ────────────────────────────────────────────────────────────
@@ -168,10 +189,34 @@ const STATUS_ICON: Record<string, string> = {
 };
 
 export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
+  // Keep the last stderr lines around so an agent crash can be explained.
+  const stderrTail: string[] = [];
+  let setupFailed = false;
+
   const client = AcpClient.spawn({
     cwd: opts.cwd,
     env: opts.env,
-    onStderr: process.env.CGOOSE_DEBUG === "1" ? (line) => process.stderr.write(`${pc.dim(line)}\n`) : undefined,
+    args: opts.agentBuiltins.length > 0
+      ? ["--with-builtin", opts.agentBuiltins.join(",")]
+      : [],
+    onStderr: (line) => {
+      stderrTail.push(line);
+      if (stderrTail.length > 20) stderrTail.shift();
+      if (process.env.CGOOSE_DEBUG === "1") {
+        process.stderr.write(`${pc.dim(line)}\n`);
+      }
+    },
+    onExit: () => {
+      // Called from the transport; guard against use before UI exists.
+      if (!tui || exiting) return;
+      busy = false;
+      loader.stop();
+      transcript.addChild(new Text(pc.red("⚠ goose acp exited unexpectedly"), 1, 0));
+      for (const line of stderrTail.slice(-5)) {
+        transcript.addChild(new Text(pc.dim(line), 1, 0));
+      }
+      tui.requestRender();
+    },
   });
 
   const terminal = new ProcessTerminal();
@@ -191,6 +236,11 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   // ─── Agent → client handlers ──────────────────────────────────────────────
 
+  // Pending permission bookkeeping: Esc must go to the SelectList while the
+  // overlay is open, and a turn end/cancel must resolve a hanging request.
+  let permissionActive = false;
+  let cancelPendingPermission: (() => void) | null = null;
+
   client.setPromptHandlers({
     requestPermission: (params) => new Promise<RequestPermissionResponse>((resolve) => {
       const options = Array.isArray(params?.options) ? params.options : [];
@@ -206,11 +256,15 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         6,
         selectListTheme,
       );
+      permissionActive = true;
       const finish = (response: RequestPermissionResponse): void => {
+        permissionActive = false;
+        cancelPendingPermission = null;
         tui.hideOverlay();
         tui.setFocus(editor);
         resolve(response);
       };
+      cancelPendingPermission = () => finish({ outcome: { outcome: "cancelled" } });
       list.onSelect = (item: any) => {
         finish(item.value === "cancel"
           ? { outcome: { outcome: "cancelled" } }
@@ -224,14 +278,16 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       tui.setFocus(list);
     }),
 
-    readTextFile: (params) => {
-      const content = readFileSync(params.path as string, "utf-8");
-      return Promise.resolve({ content });
+    readTextFile: async (params) => {
+      const content = await readFile(params.path as string, "utf-8");
+      return { content };
     },
 
-    writeTextFile: (params) => {
-      writeFileSync(params.path as string, params.content as string);
-      return Promise.resolve() as Promise<unknown>;
+    writeTextFile: async (params) => {
+      const filePath = params.path as string;
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, params.content as string, "utf-8");
+      return {};
     },
   });
 
@@ -330,7 +386,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     1,
     0,
   ));
-  const setLabel = opts.set?.title ?? (opts.set === undefined && opts.agentBuiltins.length === 0 ? undefined : "Default");
+  const setLabel = opts.set?.title ?? (opts.useDefaultProfile ? "Default (goose config.yaml)" : undefined);
   if (setLabel !== undefined) {
     tui.addChild(new Text(pc.dim(`set: ${setLabel}`), 1, 0));
   }
@@ -344,21 +400,30 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   editor.onSubmit = (value: string) => {
     const text = value.trim();
     if (!text || busy) return;
+    if (setupFailed || !sessionId) {
+      transcript.addChild(new Text(pc.red("⚠ No ACP session — press Esc to exit."), 1, 0));
+      tui.requestRender();
+      return;
+    }
     void submitPrompt(text);
   };
 
   const finishTurn = (turnError?: string): void => {
     busy = false;
     loader.stop();
+    // A cancelled turn may leave a permission request hanging — resolve it so
+    // the agent→client call does not stay unanswered and the overlay closes.
+    if (permissionActive) cancelPendingPermission?.();
     if (currentMd) flushStream(true);
     else if (turnError) {
       transcript.addChild(new Text(pc.red(`⚠ ${turnError}`), 1, 0));
     }
-    // Reset per-turn buffers
+    // Reset per-turn buffers; rendered tool lines stay in the transcript
     currentMd = null;
     streamBuffer = "";
     thoughtMd = null;
     thoughtBuffer = "";
+    toolLines.clear();
     tui.requestRender();
   };
 
@@ -388,6 +453,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   }
 
   tui.addInputListener((data: string): { consume?: boolean } | undefined => {
+    // While the permission overlay is open, Esc/Ctrl+C belong to the SelectList
+    // (reject this tool call) — do not intercept them here.
+    if (permissionActive) return undefined;
     if (matchesKey(data, Key.escape)) {
       if (busy && sessionId) {
         client.cancel(sessionId);
@@ -435,18 +503,31 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     if (opts.isNew) {
       const response = await client.newSession({
         cwd: opts.cwd,
-        mcpServers: [],
+        mcpServers: buildMcpServers(opts),
         _meta: {
           goose: {
             client: "cgoose",
             sessionTitle: opts.sessionTitle,
+            provider: opts.provider,
             enabledExtensions,
           },
         },
       });
       sessionId = response.sessionId;
+      // goose 1.57 loads the default profile regardless of `enabledExtensions`
+      // (verified via acp-client-smoke), so "None" cannot hide profile
+      // extensions on this version — be honest about it.
+      if (!opts.useDefaultProfile && !opts.set && opts.agentBuiltins.length === 0) {
+        transcript.addChild(new Text(
+          pc.yellow("⚠ None set: this goose version still loads the default profile extensions in chat mode."),
+          1, 0,
+        ));
+      }
     } else {
       if (!opts.resumeSessionId) throw new Error("resume requires a session id");
+      if (!client.supportsLoadSession()) {
+        throw new Error("this goose version cannot resume via ACP (no loadSession capability)");
+      }
       await client.loadSession({
         cwd: opts.cwd,
         sessionId: opts.resumeSessionId,
@@ -467,8 +548,13 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
     tui.requestRender();
   } catch (error) {
+    setupFailed = true;
     transcript.addChild(new Text(
       pc.red(`⚠ ACP setup failed: ${String((error as Error)?.message ?? error)}`),
+      1, 0,
+    ));
+    transcript.addChild(new Text(
+      pc.dim("Chat is unavailable — press Esc to exit (use classic mode instead)."),
       1, 0,
     ));
     tui.requestRender();

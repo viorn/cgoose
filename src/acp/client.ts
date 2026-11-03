@@ -111,6 +111,11 @@ export class AcpClient {
       if (opts.onExit) opts.onExit(code);
       client.failPending(new Error(`goose acp exited (code ${code})`));
     });
+    // Fires on spawn failure (e.g. goose not installed) — without this, Node
+    // throws an uncaught 'error' event instead of a readable message.
+    client.child.on("error", (err) => {
+      client.failPending(new Error(`failed to start goose acp: ${err.message}`));
+    });
     return client;
   }
 
@@ -135,7 +140,7 @@ export class AcpClient {
       return;
     }
 
-    if ("id" in msg && (msg as any).result !== undefined || (msg as any).error !== undefined) {
+    if ("id" in msg && ((msg as any).result !== undefined || (msg as any).error !== undefined)) {
       const entry = this.pending.get((msg as any).id);
       if (entry) {
         this.pending.delete((msg as any).id);

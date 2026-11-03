@@ -416,6 +416,12 @@ async function main() {
   let mode: string;
   if (isEditMode) {
     mode = "edit";
+  } else if (args.includes("ac") || args.includes("ca")) {
+    mode = "auto"; // chat + quick-resume
+  } else if (args.includes("nc") || args.includes("cn")) {
+    mode = "new"; // chat + new session
+  } else if (args.includes("sc") || args.includes("cs")) {
+    mode = "session-only"; // chat + session picker
   } else if (args.includes("wa")) {
     mode = "auto";
   } else if (args.includes("wn")) {
