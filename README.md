@@ -1,16 +1,26 @@
-# cgoose — TUI for Goose AI Sessions
+# cgoose — an ACP terminal UI for Goose
 
-**cgoose** is a terminal UI for [Goose](https://github.com/block/goose) — your AI coding agent. It replaces raw CLI commands with an interactive multi-step workflow to pick sessions, providers, models, and **session sets** (bundles of system prompt + builtin extensions).
+**cgoose** is a full terminal user interface for [Goose](https://github.com/block/goose). It speaks
+the **Agent Client Protocol (ACP)** to `goose acp` and renders the conversation itself — streaming
+answers, thinking, tool calls, permission prompts, tokens and cost — while keeping the workflow
+around it: per-project memory, session sets, worktrees, provider/model switching and model
+discovery.
 
-> Built with [Clack](https://github.com/natemoo-re/clack) prompts + [picocolors](https://github.com/alexeyraspopov/picocolors), runs on [Bun](https://bun.sh).
+It is not a wrapper that types `goose session` for you anymore. The chat *is* cgoose; the classic
+Goose TUI is an opt-in fallback (`CGOOSE_ACP_MODE=classic`).
+
+> **⚠ Tested only on Linux.** May work on macOS (no `secret-tool`, file-based secrets work). Windows is not supported.
 >
-> **⚠ Tested only on Linux.** May work on macOS (secret-tool not available, but file-based secrets should work). Windows is not supported.
+> Requires a Goose build with the `acp` subcommand — verified on **1.50.0** and **1.57.0**.
 
 ---
 
-## Demo
+## Demo — the wizard
 
 ![cgoose workflow](flow.gif)
+
+The wizard is still there — it collects the session, set, provider and model — but it now opens
+straight into cgoose's own chat.
 
 ---
 
@@ -26,14 +36,17 @@
 
 ## Why cgoose?
 
-Goose's CLI works, but every time you start a session you need to remember:
+Goose's CLI works, but every session raises the same questions: which provider did I use in this
+project, with which model, under which name, with which system prompt and extensions? And once the
+session is running, changing any of that means restarting it.
 
-- What provider did I use last time in this project?
-- What model?
-- What session name?
-- What system prompt / extensions?
+**cgoose remembers** — and lets you change the answer *while the session runs*:
 
-**cgoose remembers.** It keeps per-project history of providers, models, and session sets, shows you what you used last, and lets you fetch models directly from the API instead of typing them by hand.
+- per-project history of sessions, providers, models and sets;
+- a chat UI built for long turns: streaming, tool calls, permissions, scrollback, watchdogs;
+- live reconfiguration — switch provider, model, session set or session without losing the conversation;
+- the same Goose data (`config.yaml`, `custom_providers/`, `sessions.db`), so `goose` and cgoose see
+  the same sessions.
 
 ---
 
@@ -46,7 +59,7 @@ bash build.sh
 ./cgoose
 ```
 
-Requires **Bun** to build, but the resulting binary runs on any Linux x86_64 without Bun.
+Requires **Bun** to build; the resulting binary runs on any Linux x86_64 without Bun.
 
 ### Option 2: Local install (requires Bun)
 
@@ -55,7 +68,8 @@ bash install.sh
 cgoose
 ```
 
-Installs source + deps to `~/.local/lib/cgoose/` and a launcher to `~/.local/bin/cgoose`. Make sure `~/.local/bin` is in your `PATH`.
+Installs source + deps to `~/.local/lib/cgoose/` and a launcher to `~/.local/bin/cgoose`
+(make sure `~/.local/bin` is in `PATH`).
 
 ### Option 3: Run from source (requires Bun)
 
@@ -66,190 +80,295 @@ bun start
 
 ---
 
-## Features
+## The chat
 
-### Session Management
-- **List sessions** for current working directory with fuzzy search
-- **Create new** — custom name or leave empty for auto-name from first message
-- **Resume** existing sessions with full history
-- **Batch delete** — pick individually or clean all sessions for the current directory
+cgoose spawns `goose acp` and drives it as an ACP client. One command resumes a session, picks the
+set/provider/model from the project's history, and keeps everything changeable from inside the chat.
 
-### Session Sets (replaces recipes)
-A **session set** is a YAML file at `~/.config/cgoose/sets/<name>.yaml` that bundles:
+- **Streaming** — assistant text is rendered as it arrives, thinking blocks are shown collapsed,
+  tool calls and their results are printed inline, and the status bar tracks context usage, tokens
+  and cost.
+- **Its own screen** — the chat owns the alternate screen and scrolls the transcript itself
+  (mouse wheel, PgUp/PgDn, Ctrl+Shift+F to search) while the composer stays pinned at the bottom.
+  Streaming never yanks the view back. On exit the transcript is printed to the normal screen, so
+  it stays in your scrollback. `CGOOSE_CHAT_MAIN_SCREEN=1` restores the inline renderer.
+- **Permissions** — `session/request_permission` requests appear as framed dialogs (queued when
+  several tool calls ask at once); Esc or Ctrl+C rejects them. During a turn Esc/Ctrl+C cancels it.
+- **History** — resuming replays the conversation into the chat; sessions are read straight from
+  `sessions.db`, so sessions created by `goose` itself are listed too.
+- **Watchdogs** — a silent agent (no update for 5 minutes) is cancelled, and one turn is capped at
+  4 hours. Both are configurable, both can be disabled.
+
+### Slash commands
+
+Type them into the composer:
+
+| Command | What it does |
+|---------|--------------|
+| `/config` | Menu: provider, model, set, session |
+| `/provider [name]` | Switch provider (applied to the running session) |
+| `/model [name\|fetch]` | Switch model, or fetch the provider's model list from its API |
+| `/set [name\|default\|none]` | Switch the session set — system prompt **and** extensions, live |
+| `/session` | Switch session, start a new one, rename, fork |
+| `/session rename <title>` · `/rename [title]` | Rename (bare command asks in the composer) |
+| `/fork` | Copy the conversation into a new session |
+| `/edit` | Write the prompt in `$VISUAL`/`$EDITOR` — it is sent when the editor closes |
+| `/settings` (alias of `/config`) | Same menu as `/config` |
+
+### Keyboard shortcuts
+
+| Key | Opens |
+|-----|-------|
+| `Ctrl+P` | the configuration menu (`/config`) |
+| `Ctrl+O` | the model menu (`/model`) |
+| `Ctrl+E` | the external editor (`/edit`) |
+
+`Ctrl+M` cannot be bound to the model menu: a terminal sends Enter as CR, which *is* Ctrl+M, so the
+shortcut would fire every time you submit a prompt. `Ctrl+O` is the free equivalent.
+
+`/edit` hands the terminal to `$VISUAL` (then `$EDITOR`, then `vi`) with the composer's draft as the
+buffer, and sends whatever it finds when the editor exits cleanly — Esc out of the editor instead and
+nothing is sent, the draft stays. The chat takes the alternate screen back afterwards.
+
+Everything a command does is also reachable from the menus, and a set change, session switch or
+fork is refused while a turn is running (provider/model switches are allowed and apply to the next
+turn). Model and session menus long enough to be unwieldy get a filter line and match by substring.
+
+### Changing things live
+
+- **provider / model** → `session/set_config_option`, provider first, because switching the provider
+  resets the model to that provider's default. Works on new *and* resumed sessions.
+- **set** → the set's system prompt plus the extension list, reconciled in place through
+  `_goose/unstable/session/extensions/{list,add,remove}`. Switching to `Default` rebuilds the
+  profile from `config.yaml` (goose has no "reset to profile" request), `None` empties the list.
+- **session** → `session/load` replays history, then the current provider/model pair is re-applied and
+  the set is reconciled, so every session in a project ends up with the configuration shown in the
+  header. The picker only lists sessions of this project's directories.
+- **rename / fork** → `_goose/unstable/session/rename` and `session/fork`; the fork is renamed
+  `<title> (fork)` and configured like its parent.
+
+Config values also move: the model list comes from `configOptions` goose reports, and when the
+provider knows more models than goose does, **🔄 Fetch models from API** calls the provider's own
+`GET {base_url}/v1/models` and offers the result in a searchable list. Picking a model that the
+provider's JSON does not list records it there with the API's context limit, so the wizard sees it
+too.
+
+---
+
+## Session sets
+
+A **session set** is a YAML file at `~/.config/cgoose/sets/<name>.yaml` that bundles a system
+prompt and the extensions a session should have:
 
 ```yaml
 title: My Set
 systemPrompt: You are an expert in...
 builtins: [developer, analyze, memory]                # bundled Goose builtins
-extensions: [fetch]                                   # extensions from ~/.config/goose/config.yaml
+extensions: [fetch]                                   # names from ~/.config/goose/config.yaml
 stdioExtensions: ["mcpls --trust-project-config"]     # ad-hoc stdio commands
 ```
 
-- **System prompt** passed via `--system` flag (appended to Goose's default prompt)
-- **builtins** passed via `--with-builtin`
-- **extensions** — names of extensions already configured in `~/.config/goose/config.yaml` (e.g. `fetch`, `mcpls`, `sigma`). Each entry is translated to the matching flag: `builtin`/`platform` → `--with-builtin`, `stdio` → `--with-extension "name:cmd args"`, `streamable_http` → `--with-streamable-http-extension <uri>`
-- **stdioExtensions** — raw command lines passed straight to `--with-extension`
-- Sets launch with `--no-profile`: **only** what the set lists is loaded (in chat mode the same is achieved with `_meta.enabledExtensions` — an empty array means "no extensions")
-- Creates **consistent, replayable** agent configurations — no recipe YAML complexity
-- Session sets always launch via `goose session`, allowing session history, resume, and forks
-- Sets are discoverable, editable, and deletable via the TUI
+- `systemPrompt` → the agent's system prompt for the session.
+- `builtins` → `--with-builtin` (and `{type:"builtin"}` entries in chat mode).
+- `extensions` → names of extensions already configured in `~/.config/goose/config.yaml`
+  (`fetch`, `mcpls`, `sigma`, …). `builtin`/`platform` become builtins, `stdio` becomes an MCP
+  server with its resolved command and env, `streamable_http` becomes an HTTP MCP server.
+- `stdioExtensions` → raw `[name:]command args` lines, run as stdio MCP servers.
+- Sets are discoverable, creatable, editable and deletable from the wizard, and can be switched
+  live from the chat.
 
-#### Set choice: None vs Default vs a set
-- **None** — no extensions at all (`--no-profile` and nothing else): a bare agent without shell/file tools (on goose 1.50/1.57 chat mode ends up with no extensions at all; some builds add their own `developer`, which cgoose tolerates)
-- **Default** — leave the profile alone: Goose loads every extension enabled in `~/.config/goose/config.yaml` (classic `goose session` behavior)
-- **&lt;set&gt;** — exactly the builtins/extensions the set lists
+#### None vs Default vs a set
 
-Extension flags only apply when a session is **created**. On resume, Goose restores the extension set stored in the session DB and ignores CLI extension flags — how the session was first created wins (the set's system prompt is still re-applied). In chat mode the extension set is also applied to a resumed session (the loaded list is diffed and reconciled through `_goose/unstable/session/extensions/*`), except when the set carries stdio extensions with inline `KEY=value` env vars: goose only accepts env through `envKeys` pointing at its own secret store, so such a set falls back to loading the profile as well.
+| Choice | Result |
+|--------|--------|
+| **None** | A session with no extensions at all (`--no-profile` in classic mode, an empty `enabledExtensions` list in chat mode). Some Goose builds add their own `developer`; cgoose tolerates it and never adds or removes it. |
+| **Default** | Leave the profile alone — every extension enabled in `~/.config/goose/config.yaml` loads. |
+| **&lt;set&gt;** | Exactly what the set lists, nothing else. |
 
-#### Prompt on resume
-The selected set is the source of truth for the system prompt. Goose ≥ 1.55 stores `--system` in the session DB (`system_prompt_extras`), so on resume cgoose applies the **current** set's prompt (edit the set → resume → fresh prompt). When **no set** is selected it passes an explicit `--system ""` to clear any previously stored prompt, since omitting the flag would restore the old one.
+The selected set is the **source of truth** for the system prompt: on resume the *current* set's
+prompt is applied, and "None" explicitly clears any prompt stored in the session DB (Goose ≥ 1.55
+persists it) instead of restoring the old one. Editing a set and resuming is enough to pick up the
+change — there is no per-project snapshot.
 
-**Why not recipes?**
-- Recipes use `goose run --recipe` which creates a one-shot session with no resume capability
-- Recipes require YAML syntax with sub-recipes, parameters, response schemas — overkill for most use cases
-- Session sets are plain JSON, trivially editable, and work with `goose session` (full history/resume/fork support)
-
-The TUI still discovers installed recipes via `goose recipe list --format json`, but they are shown as read-only in a separate section, and launching a recipe creates a new session set equivalent.
-
-### Provider Selection
-- Sorted by your usage history (most recent first), then alphabetically
-- Shows last used, history, and session provider hints
-- **Ollama** — auto-detected if running locally, shows model count + tool support
-- Supports any number of enabled providers from your Goose config
-- Custom providers (`custom_*`) only shown when a JSON config file exists
-
-### Model Selection
-- **Last used model** shown as default (`✦`)
-- **Model history** per provider — previously used models at your fingertips
-- **Fetch from API** — hits `GET /v1/models` on OpenAI-compatible endpoints, parses `context_limit`/`max_context`/`context_window` if available
-- **Ollama models** — lists with tool support badges, warns if model lacks tool calling
-- **Manual input** fallback with validation
-
-### Context Limit
-- When discovery or manual input finds a model not yet in the provider's JSON config, cgoose prompts you for a **context limit** (in tokens)
-- If the API returned context info (KodikRouter, llama.cpp, etc.), it's pre-filled as the default
-- Otherwise defaults to `128000` (Goose's built-in default)
-- **On launch**, cgoose sets `GOOSE_CONTEXT_LIMIT` so Goose actually uses the value instead of falling back to its canonical registry or `DEFAULT_CONTEXT_LIMIT`
-
-### Secrets & Auth
-- Reads API keys from all Goose storage backends:
-  - **System keyring** (libsecret — works with GNOME Keyring, KDE Wallet, KeePassXC, etc.)
-  - **File-based** (`~/.config/goose/secrets.yaml`)
-  - Environment variables
-- If a key is missing, cgoose shows a clear hint about which variable to set
-
-### Git Worktree Integration
-- **New sessions** create a dedicated **git worktree** under `<repo>/.worktree/<name>` with a matching branch
-- **Resume** detects existing worktree and launches Goose inside it — no manual checkout needed
-- **Isolation** — worktrees let you run Goose in a separate working tree without touching your main branches
-- **Cleanup** — deleting a session through cgoose also removes the worktree and branch
-- **Smart recovery** — detects stale worktree registrations and prunes them automatically
-- Skipped if not in a git repo or `CGOOSE_NO_WORKTREE=1` is set (default)
-- Force with `CGOOSE_FORCE_WORKTREE=1` or the `w` CLI flag
-- Default mode is `no-worktree`. Use `w` flag or set `default_mode: "worktree"` in config to enable worktrees
-
-### Local Config Overrides
-- **`.goose/config.yaml`** — cgoose automatically discovers it in the project root or session worktree
-- Sets `GOOSE_ADDITIONAL_CONFIG_FILES` env var so Goose includes it alongside the main config
-- **Secrets resolution** — any `${VARIABLE}` or `$VARIABLE` references found in `.goose/config.yaml` values are resolved from Goose secrets (system keyring,`~/.config/goose/secrets.yaml`) and injected into the session environment
-
-### Launch (classic mode)
-- Always uses `goose session` (never `goose run --recipe`); chat mode is the default, this path is used with `CGOOSE_ACP_MODE=classic`
-- Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
-- Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
-- Sets `GOOSE_CONTEXT_LIMIT` from the provider's JSON model config
-- New session with a set: `--system`, `--with-builtin`, `--no-profile`
-- Resume applies the current set's prompt via `--system` (or `--system ""` when no set is selected), skips `--with-builtin` (extensions are in session DB)
-- Shows set in launch summary if one was selected
-- Spawns `goose session` with `stdio: inherit`, forwards exit code
-
-### Chat Mode (ACP) — default
-- cgoose spawns `goose acp` and renders the dialog itself instead of handing the terminal to Goose's TUI. This is the default; `CGOOSE_ACP_MODE=classic` switches to the classic `goose session` TUI (an unknown value warns and keeps the default)
-- Streaming assistant text, thinking blocks, tool calls and token/cost usage are rendered by cgoose
-- Session sets: builtins via `goose acp --with-builtin`, the full extension list via `_meta.enabledExtensions` (typed `GooseExtension[]`), stdio/HTTP extensions additionally via ACP `mcpServers`, system prompt via `_goose/unstable/session/system-prompt/set`
-- `_meta.enabledExtensions` **replaces** the profile's extensions, so a set (and None, via an empty array) loads exactly what it lists — the chat-mode equivalent of `--no-profile`. The Default set sends no such field and lets the profile load. On resume `session/load` ignores it, so the loaded list is reconciled with `_goose/unstable/session/extensions/{list,add,remove}` — including Default, whose profile is rebuilt from `config.yaml` (goose has no "reset to profile" request), so a resumed session created with None really does switch to the profile extensions
-- The chat no longer warns that "the profile is always loaded": after creating a session it reads the real extension list and warns only if profile extensions leaked in (a goose version that ignores the field) — `mcpServers` stays in the request as a safety net for exactly that case
-- Provider and model reach the agent as `GOOSE_PROVIDER`/`GOOSE_MODEL`, and are then pinned through ACP with `session/set_config_option` (provider first, then model, because switching the provider resets the model to its default): `session/new` resolves the pair from the env, but `session/load` keeps the pair stored in the session row and would otherwise ignore the wizard's choice. `_meta.provider` is deliberately not sent, because goose would resolve the model from the provider registry's default and silently replace the one picked in the wizard. An unchanged pair sends no request; an unsupported option degrades into a warning instead of breaking the session
-- The chat owns the alternate screen: the transcript (header included) scrolls inside cgoose (mouse wheel, PgUp/PgDn, Ctrl+Shift+F search) while the composer stays pinned, and streamed updates no longer pull the view back to the bottom. On exit the final transcript is printed back to the terminal's normal screen, so it stays in the scrollback. `CGOOSE_CHAT_MAIN_SCREEN=1` restores the old inline renderer (terminal owns scrollback, any repaint pulls the view down while a turn runs)
-- Permissions are shown as a SelectList overlay; Esc/Ctrl+C during a turn cancels it. Esc exits when the prompt is empty (with a draft it arms the exit — press it twice), Ctrl+C always exits
-- Two watchdogs bound a turn: no agent activity for 5 minutes cancels it (`CGOOSE_ACP_IDLE_TIMEOUT_MS`), a single turn is capped at 4 hours (`CGOOSE_ACP_PROMPT_TIMEOUT_MS`)
-- Requires a goose with the `acp` subcommand (1.50 and 1.57 verified); without `_meta.enabledExtensions` support the profile loads alongside the set and the chat says so. No `acp` subcommand at all → cgoose falls back to the classic `goose session` TUI
-- Verification: `bun run test` (no goose needed), `bun run acp:probe`, `bun run acp:smoke`
+**Why not recipes?** Recipes run through `goose run --recipe`, which creates a one-shot session with
+no resume. Installed recipes are still discovered (`goose recipe list --format json`) and shown in
+the wizard, but a set is what cgoose launches.
 
 ---
 
-## Workflow
+## The wizard
 
-1. **Choose a session** — pick from existing sessions for this directory, create new, or delete
-2. **Name the session** — enter a custom name or leave empty for auto-name from first message
-3. **Pick a session set** (optional) — last used set at the very top (`❶`), then None, then history + alphabetically, plus options to create new sets or manage existing ones
-4. **Pick a provider** — sorted by your history, shows Ollama if running locally
-5. **Pick a model** — last used, history, fetch from API, or type manually
-6. **Context limit** (if new model for custom provider) — enter tokens or accept default
-7. **Launch** — summary screen → `goose session` starts in the same terminal
+Six steps, always seeded with the last answer in this project:
 
-**Pressing Enter on every step** creates a new session with the same set, provider, and model as the last one — no navigation needed.
+1. **session** — pick an existing session or create a new one
+2. **session name** — type one, or press Enter for an auto-generated name
+3. **set** — last used first (`❶`), then None, then history and the rest, plus create/manage sets
+4. **provider** — history first, then alphabetical (`custom_*` providers only when their JSON exists)
+5. **model** — last used (`✦`), history, configured models, manual input or fetch from the API
+6. **launch** — summary and confirmation
 
-Pressing **Esc** at any step goes back one step (not abort).
+**Pressing Enter on every step resumes with exactly the set, provider and model you used last** —
+which makes the wizard a two-key affair in practice. Esc goes back one step.
 
----
-
-## Data Locations
-
-| What | Where |
-|------|-------|
-| Provider config | `~/.config/goose/config.yaml` |
-| Custom provider defs | `~/.config/goose/custom_providers/*.json` |
-| Secrets (keyring) | System keyring via libsecret (service: `secrets@goose:default`) |
-| Secrets (file) | `~/.config/goose/secrets.yaml` |
-| Session sets | `~/.config/cgoose/sets/*.json` |
-| Per-project history | `~/.config/cgoose/projects/<dir>-<hash>.json` |
-| Git worktrees | `<repo>/.worktree/<name>` (per-project, gitignored) |
-| Session DB | `~/.local/share/goose/sessions/sessions.db` |
+Provider, model and set are remembered **per directory**, and everything else follows from that:
+the quick modes and the live switcher reuse the same history.
 
 ---
 
-## CLI Flags
+## Quick modes
 
-Run cgoose with a single-letter mode (like tmux):
+| Flag | What it does |
+|------|--------------|
+| `a` | Auto-resume the last session of this directory |
+| `n` | New session with the last provider, model and set |
+| `s` | Session picker only, then launch with the last provider/model/set |
+| `m` / `w` | Without / with git worktree isolation |
+| `ma` `ms` `mn` | The above, without worktrees |
+| `wa` `ws` `wn` | The above, with worktrees forced on |
+| `e` / `me` / `we` | Edit mode: roll a session back to an earlier message |
 
-| Mode | What it does |
-|------|-------------|
-| `a` | **Auto-resume** — jump straight to launch with the last session, provider, model, and set for this project |
-| `n` | **New session** — skip pickers, start a new session with the last provider, model, and set |
-| `s` | **Sessions only** — show only the session picker, skip provider, model, and set selection, use last used |
-| `m` | **No-worktree** — run without git worktree isolation (default mode) |
-| `w` | **Force worktree** — enable git worktree isolation (overrides `CGOOSE_NO_WORKTREE=1` or `m` flag) |
-| `ma` | Auto-resume + no worktree |
-| `ms` | Sessions only + no worktree |
-| `mn` | New session + no worktree |
-| `wa` | Auto-resume + force worktree |
-| `ws` | Sessions only + force worktree |
-| `wn` | New session + force worktree |
-
-When using `a`, `n`, or `s` modes, the last used **set** is also restored alongside provider and model.
-
-If there's no project history for the current directory, the flag is ignored and the full workflow runs.
-
-**Chat (ACP) mode is the default** — every flag above launches the cgoose chat UI on top of `goose acp`. The old chat letters are gone (`c` is no longer a flag); the pairs still work as aliases of their base mode (`mc`→`m`, `ac`/`ca`→`a`, `nc`/`cn`→`n`, `sc`/`cs`→`s`, `wc`→`w`).
+`a` and `n` skip the wizard entirely; in chat mode they also skip the confirmation, so the chat
+opens immediately. In classic mode the "Launch Goose now?" prompt stays.
 
 ```bash
-cgoose a    # resume last session (with last set, provider, model)
-cgoose n    # new session with last set/provider/model
-cgoose s    # pick a session, then launch
-cgoose m    # full workflow, no worktree
-cgoose w    # full workflow, force worktree
-cgoose wa   # auto-resume, force worktree
+cgoose a            # resume the last session here, chat opens right away
+cgoose n            # new session, chat opens right away
+cgoose s            # pick a session, then launch
+cgoose wa           # auto-resume with a git worktree
 
 CGOOSE_ACP_MODE=classic cgoose n   # hand the terminal to the classic `goose session` TUI
 ```
 
-## Scripts
+---
+
+## Providers, models, secrets
+
+- Providers come from `~/.config/goose/config.yaml`; `custom_*` providers are read from
+  `~/.config/goose/custom_providers/*.json` (engine, base URL, model list, context limits).
+- Model lists come from Goose (`configOptions`) or from the provider's own `GET /v1/models`, with
+  `context_limit` / `context_window` / `max_tokens` parsed when the API reports one. A model added
+  from the chat is written back to the provider JSON with that limit and exported as
+  `GOOSE_CONTEXT_LIMIT` for the session.
+- **Ollama** is detected when it is running locally; models are listed with a tool-calling badge.
+- API keys are read from the system keyring (libsecret), `~/.config/goose/secrets.yaml` and the
+  environment. A missing key produces a hint naming the variable to set.
+- `.goose/config.yaml` in the project (or the session's worktree) is loaded through
+  `GOOSE_ADDITIONAL_CONFIG_FILES`, and `${VAR}` / `$VAR` references in it are resolved from Goose's
+  secrets before the session starts.
+
+---
+
+## Git worktrees
+
+New sessions can run in a dedicated worktree at `<repo>/.worktree/<name>` on a matching branch:
+
+- resume detects the existing worktree and continues there;
+- deleting a session removes the worktree and the branch;
+- stale registrations are pruned automatically;
+- disabled outside a git repo, enabled per run with `w`/`wa`/`ws`/`wn`, or permanently with
+  `{ "default_mode": "worktree" }` in `~/.config/cgoose/config.json`.
+
+---
+
+## Requirements and compatibility
+
+- **Goose** with the `acp` subcommand. Without it, cgoose prints a warning and falls back to the
+  classic `goose session` TUI.
+- The `_goose/unstable/*` requests cgoose uses (system prompt, extension add/remove/list, rename)
+  degrade into chat warnings on builds that lack them, so an older Goose still works with the
+  features it has.
+- **Bun** ≥ 1.x to run from source or build the binary.
+- Linux; macOS may work; Windows is unsupported.
+
+---
+
+## Environment variables
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CGOOSE_ACP_MODE` | `acp` | `classic` hands the terminal to `goose session` instead of cgoose's chat |
+| `CGOOSE_ACP_IDLE_TIMEOUT_MS` | `300000` | cancel a turn when the agent sends nothing for this long (`0` disables) |
+| `CGOOSE_ACP_PROMPT_TIMEOUT_MS` | `14400000` | absolute cap on a single turn (`0` disables) |
+| `CGOOSE_CHAT_MAIN_SCREEN` | unset | `1` renders the chat inline instead of on the alternate screen |
+| `CGOOSE_NO_WORKTREE` | set by default | `1` skips worktree creation |
+| `CGOOSE_FORCE_WORKTREE` | unset | `1` forces worktrees (overrides the above) |
+| `CGOOSE_DEBUG` | unset | `1` echoes `goose acp` stderr and the launch command |
+| `GOOSE_PATH_ROOT` | `~/.local/share/goose` | where cgoose looks for `sessions/sessions.db` (Goose honours the same variable) |
+
+---
+
+## How it works
+
+```
+cgoose (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
+        │                                           │
+        │  initialize / session/new | session/load   │
+        │  session/prompt ⇄ session/update           │
+        │  session/set_config_option                 │
+        │  _goose/unstable/…  (goose extensions)     │
+```
+
+| Path | Role |
+|------|------|
+| `src/acp/client.ts` | ACP transport: spawn, JSON-RPC framing, request timeouts, agent→client handlers |
+| `src/acp/chat.ts` | the chat UI: transcript, composer, overlays, slash commands, watchdogs |
+| `src/acp/custom.ts` | Goose's custom `_goose/unstable/*` requests |
+| `src/acp/extensions.ts` | session set → ACP extension list (`planGooseExtensions`, `planProfileExtensions`, diffing) |
+| `src/acp/session-config.ts` | provider/model through `session/set_config_option` |
+| `src/acp/session-meta.ts` | `session/new` `_meta` (session title, client identity, extension list) |
+| `src/acp/overlay.ts` | framed and searchable overlay components |
+| `src/acp/timeouts.ts` | turn watchdogs |
+| `src/launcher.ts` | shared launch preparation (worktree, env, secrets) and the classic mode |
+| `src/index.ts` | CLI flags and the setup wizard |
+
+### Development
+
+```bash
+bun run check     # tsc
+bun run test      # unit tests: extensions, session meta/config, sessions db, client, overlays
+bun run acp:probe # raw ACP session against a real goose
+bun run acp:smoke # AcpClient without the TUI
+```
+
+The probe scripts under `scripts/acp-*-probe.ts` (config options, config surface, fork) need a real
+`goose acp` but no API key — they never send a prompt.
 
 | Script | What it does |
-|--------|-------------|
-| `build.sh` | Compiles a standalone binary (`./cgoose`) with Bun runtime embedded |
-| `install.sh` | Installs source to `~/.local/lib/cgoose/` + launcher to `~/.local/bin/cgoose` |
+|--------|--------------|
+| `build.sh` | compiles a standalone binary (`./cgoose`) with the Bun runtime embedded |
+| `install.sh` | installs source to `~/.local/lib/cgoose/` and a launcher to `~/.local/bin/cgoose` |
+
+Two UI toolkits meet here: the chat renders with [pi-tui](https://github.com/earendil-works/pi-tui),
+the setup wizard still uses [Clack](https://github.com/natemoo-re/clack) prompts.
+
+---
+
+## Data locations
+
+| What | Where |
+|------|-------|
+| Goose config | `~/.config/goose/config.yaml` |
+| Custom providers | `~/.config/goose/custom_providers/*.json` |
+| Secrets | system keyring · `~/.config/goose/secrets.yaml` · environment |
+| Sessions (both UIs) | `~/.local/share/goose/sessions/sessions.db` |
+| Session sets | `~/.config/cgoose/sets/*.yaml` (legacy `.json` still read) |
+| Per-project memory | `~/.config/cgoose/projects/<dir>-<hash>.json` |
+| cgoose config | `~/.config/cgoose/config.json` |
+| Git worktrees | `<repo>/.worktree/<name>` |
+
+---
+
+## Legacy: before the ACP renderer
+
+Up to v2.2 cgoose was a Clack wizard that prepared the flags and launched `goose session` — the
+setup workflow, with Goose's own TUI doing the talking. That description is kept for history,
+including a comparison of what it could and could not do:
+
+- [docs/legacy-classic.md](docs/legacy-classic.md) — archived README (English)
+- [docs/legacy-classic.ru.md](docs/legacy-classic.ru.md) — архивный README (по-русски)
+
+The classic path still exists in the code: `CGOOSE_ACP_MODE=classic` hands the terminal to
+`goose session` with the same session sets, worktrees and per-project history.
 
 ---
 

@@ -9,6 +9,8 @@
  *   w    Force worktree: enable git worktree isolation (overrides CGOOSE_NO_WORKTREE=1)
  *   a    Auto-resume: quick resume to last session in this directory
  *   n    New session: skip pickers, start new with last provider/model
+ *        (in chat mode a/n open the chat immediately — no summary, no confirm;
+ *        classic mode keeps the "Launch Goose now?" prompt)
  *   s    Sessions only: picker only, then launch with last provider/model
  *   ma   Like a but without git worktree isolation (shortcut for m+a)
  *   ms   Like s but without git worktree isolation (shortcut for m+s)
@@ -34,7 +36,7 @@ import {
 } from "@clack/prompts";
 import pc from "picocolors";
 
-import { getCurrentDirName, generateSessionName } from "./utils";
+import { getCurrentDirName, generateSessionName, formatNumber } from "./utils";
 import { readCgooseConfig, listSessionSets, saveSessionSet, deleteSessionSet, type SessionSet } from "./cgoose-config";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
@@ -404,6 +406,10 @@ async function main() {
   let modelValue = "";
   let selectedSet = ""; // name of the selected session set ("" = none)
   let lastAllSessions: GooseSession[] = [];
+  /** `a`/`n` resolved without any prompt: in chat mode the summary + "Launch
+   *  Goose now?" would be one more Enter on a path that exists to skip prompts,
+   *  so the chat opens straight away (classic mode keeps the confirmation). */
+  let quickLaunch = false;
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
   // Flags are single-letter, tmux-style: `cgoose mn`, `cgoose w`. Leading
@@ -495,6 +501,7 @@ async function main() {
         sessionName = lastSession.id;
         isNewSession = false;
         step = "launch";
+        quickLaunch = true;
       } else {
         log.warn(pc.yellow("No sessions found for this project. Falling back to full workflow."));
       }
@@ -512,6 +519,7 @@ async function main() {
       // worktree (quick-new used to launch with an auto-named session).
       sessionName = generateSessionName(sessionPrefix);
       step = "launch";
+      quickLaunch = true;
     }
   }
 
@@ -1044,7 +1052,7 @@ async function main() {
                 options: apiModels.map((m) => ({
                   label: m.id,
                   value: m.id,
-                  hint: m.contextLimit ? pc.dim(`context: ${m.contextLimit.toLocaleString("ru-RU")}`) : pc.dim("context: 128k default"),
+                  hint: m.contextLimit ? pc.dim(`context: ${formatNumber(m.contextLimit)}`) : pc.dim("context: 128k default"),
                 })),
                 maxItems: 15,
                 filter: (search, opt) => {
@@ -1076,7 +1084,7 @@ async function main() {
             });
             if (!isCancel(addToJson) && addToJson) {
               const apiCtxLimit = selectedApiContextLimit;
-              const suggestedLimit = (apiCtxLimit ?? 128000).toLocaleString("ru-RU");
+              const suggestedLimit = formatNumber(apiCtxLimit ?? 128000);
               const ctxInput = await text({
                 message: `Context limit for "${modelValue}" (tokens): ${pc.dim(`(Enter for ${suggestedLimit})`)}`,
                 placeholder: suggestedLimit,
@@ -1090,7 +1098,7 @@ async function main() {
                 ? Number((ctxInput as string).trim())
                 : apiCtxLimit ?? 128000;
               if (addModelToCustomProviderJson(selectedProviderName, modelValue, contextLimit)) {
-                log.success(pc.green(`✓ Added "${modelValue}" (context_limit: ${contextLimit.toLocaleString("ru-RU")}) to ${selectedProviderName} provider config`));
+                log.success(pc.green(`✓ Added "${modelValue}" (context_limit: ${formatNumber(contextLimit)}) to ${selectedProviderName} provider config`));
               } else {
                 log.warn(pc.yellow(`⚠ Could not update provider config`));
               }
@@ -1127,7 +1135,7 @@ async function main() {
                 ? Number((ctxInput as string).trim())
                 : 128000;
               if (addModelToCustomProviderJson(selectedProviderName, modelValue, contextLimit)) {
-                log.success(pc.green(`✓ Added "${modelValue}" (context_limit: ${contextLimit.toLocaleString("ru-RU")}) to ${selectedProviderName} provider config`));
+                log.success(pc.green(`✓ Added "${modelValue}" (context_limit: ${formatNumber(contextLimit)}) to ${selectedProviderName} provider config`));
               } else {
                 log.warn(pc.yellow(`⚠ Could not update provider config`));
               }
@@ -1170,6 +1178,32 @@ async function main() {
             : "none (no extensions)";
         const setLine = `\n  ${pc.bold("Set")}:     ${pc.cyan(displaySet)}`;
 
+        const chatLaunchOptions: Parameters<typeof launchGooseAcp>[0] = {
+          sessionName: isNewSession ? sessionName : resolvedSessionName,
+          providerInfo: providerCfg,
+          model: modelValue,
+          isNew: isNewSession,
+          resumeSessionId: isNewSession ? undefined : sessionName,
+          // `session/load` keeps the provider/model stored in the session row,
+          // so the chat needs them to tell "unchanged" from "switched" and
+          // apply the wizard's choice through `session/set_config_option`.
+          resumeConfig: sessionObj
+            ? {
+                provider: sessionObj.provider_name,
+                model: sessionObj.model_config?.model_name ?? null,
+              }
+            : undefined,
+          sessionDisplayName: resolvedSessionName,
+          sessionSet: selectedSet,
+        };
+
+        // `cgoose a` / `cgoose n`: the pickers were skipped on purpose, so in
+        // chat mode the chat opens right away — no summary, no confirmation.
+        if (quickLaunch && isChatMode) {
+          await launchGooseAcp(chatLaunchOptions);
+          return; // chat closed
+        }
+
         outro(
           `${pc.green("✓")} Configuration complete:
   ${pc.bold("Session")}:  ${pc.cyan(displayName)}
@@ -1185,24 +1219,7 @@ async function main() {
         }
 
         if (isChatMode) {
-          await launchGooseAcp({
-            sessionName: isNewSession ? sessionName : resolvedSessionName,
-            providerInfo: providerCfg,
-            model: modelValue,
-            isNew: isNewSession,
-            resumeSessionId: isNewSession ? undefined : sessionName,
-            // `session/load` keeps the provider/model stored in the session row,
-            // so the chat needs them to tell "unchanged" from "switched" and
-            // apply the wizard's choice through `session/set_config_option`.
-            resumeConfig: sessionObj
-              ? {
-                  provider: sessionObj.provider_name,
-                  model: sessionObj.model_config?.model_name ?? null,
-                }
-              : undefined,
-            sessionDisplayName: resolvedSessionName,
-            sessionSet: selectedSet,
-          });
+          await launchGooseAcp(chatLaunchOptions);
           return; // chat closed
         }
         launchGoose(sessionName, providerCfg, modelValue, isNewSession, resolvedSessionName, selectedSet);

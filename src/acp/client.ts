@@ -14,10 +14,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type {
   ContentBlock,
+  ForkSessionRequest,
   InitializeRequest,
   InitializeResponse,
   JsonRpcMessage,
   LoadSessionRequest,
+  LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -309,9 +311,14 @@ export class AcpClient {
     return (await this.request("session/new", req, 120_000)) as NewSessionResponse;
   }
 
-  async loadSession(req: LoadSessionRequest): Promise<void> {
+  async loadSession(req: LoadSessionRequest): Promise<LoadSessionResponse> {
     // Session updates (history replay) arrive via onUpdate while awaiting.
-    await this.request("session/load", req, 120_000);
+    return (await this.request("session/load", req, 120_000)) as LoadSessionResponse;
+  }
+
+  /** `session/fork` — a copy of the conversation in a brand-new session. */
+  async forkSession(req: ForkSessionRequest): Promise<NewSessionResponse> {
+    return (await this.request("session/fork", req, 120_000)) as NewSessionResponse;
   }
 
   async prompt(sessionId: string, prompt: ContentBlock[], timeoutMs = 0): Promise<PromptResponse> {

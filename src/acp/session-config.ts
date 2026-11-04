@@ -75,6 +75,12 @@ export interface SessionConfigOutcome {
   model?: string | null;
   /** Requests actually sent, in order. */
   applied: SessionConfigStep[];
+  /**
+   * The refreshed `configOptions` the agent reported last. Carries the model
+   * list of the *new* provider after a switch, so the chat's menus stay in
+   * sync without an extra round-trip.
+   */
+  configOptions?: SessionConfigOption[];
   /** Non-fatal problem to show in the chat (unsupported method, mismatch, …). */
   warning?: string;
 }
@@ -94,6 +100,8 @@ export async function applySessionConfig(
   const steps = planSessionConfig(desired, current);
   let provider = current.provider ?? null;
   let model = current.model ?? null;
+  /** Refreshed options from the agent's last successful response. */
+  let configOptions: SessionConfigOption[] | undefined;
 
   for (const step of steps) {
     const params: SetSessionConfigOptionRequest = {
@@ -113,12 +121,14 @@ export async function applySessionConfig(
       const reported = optionValue(response?.configOptions, step.configId);
       if (step.configId === "provider") provider = reported ?? step.value;
       else model = reported ?? step.value;
+      if (response?.configOptions) configOptions = response.configOptions;
     } catch (error) {
       const detail = String((error as Error)?.message ?? error);
       const unsupported = /unsupported config option|method not found|invalid params/i.test(detail);
       return {
         provider,
         model,
+        ...(configOptions ? { configOptions } : {}),
         applied: steps.slice(0, steps.indexOf(step)),
         warning:
           `Could not apply ${step.configId} "${step.value}" via session/set_config_option: ${detail}. ` +
@@ -141,6 +151,7 @@ export async function applySessionConfig(
   return {
     provider,
     model,
+    ...(configOptions ? { configOptions } : {}),
     applied: steps,
     ...(mismatches.length > 0
       ? { warning: `Session runs with ${mismatches.join(", ")} instead of the selected ${desired.provider}/${desired.model}` }

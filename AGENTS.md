@@ -27,9 +27,13 @@ The TUI wizard has 6 steps, each with `initialValue` set to the last-used select
 3. **set** — last-used set is **first** (`❶`), then None, then history + alphabetically, plus options to create/manage sets. `initialValue: lastSet`
 4. **provider** — sorted by history then alphabetical. `initialValue: lastProviderRaw`
 5. **model** — last used (`✦`), then history, configured models, manual/fetch. `initialValue: lastModel / defaultModel`
-6. **launch** — summary confirmation
+6. **launch** — summary + confirmation
 
 **Pressing Enter on every step = resume with identical set/provider/model as last session.**
+
+Quick modes skip the wizard: `cgoose a` (last session in this directory) and `cgoose n`
+(new session) go straight to step 6, and in **chat mode they skip the confirmation too** —
+the chat opens immediately (`quickLaunch` in `src/index.ts`). Classic mode still asks.
 
 If no project meta exists yet, first option is selected (None → first provider → first model).
 
@@ -146,6 +150,44 @@ warns in the TUI and keeps the ACP default.
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
     (`mode: "set"`, key `cgoose`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
+- **Live configuration** — no restart: slash commands typed into the composer
+  (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`) plus `SelectList`
+  overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
+  - provider/model → `session/set_config_option`; the response's `configOptions` are kept, and
+    `session/load`'s are read too (`LoadSessionResponse` used to be discarded, which is why the
+    model menu claimed "No model list available" on every resume)
+  - set → system prompt + **extension reconciliation in place** through
+    `_goose/unstable/session/extensions/{list,add,remove}`, driven by `planForSet()`:
+    `buildExtensionArgs` resolves the set's `extensions:` names exactly like the launcher, so
+    the live list equals what a new session would get. Default switches to the profile built
+    from config.yaml, None empties the list (goose keeps its implicit `developer`). Verified
+    live: A→B added/removed builtins, Default added `scheduler` (hidden from the config RPC),
+    None removed everything, a stdio set added `echo-mcp`
+  - session → `session/load`, then the current provider/model pair is re-applied and the set is
+    reconciled; the picker is filtered to this project's directories (same filter as the
+    wizard) because `sessions.db` holds every project the user ever ran
+  - model list → `configOptions.model.options`; when goose has none (or for models the
+    provider added later) **🔄 Fetch models from API** / `/model fetch` calls the provider's
+    own `GET {base_url}/v1/models` (`fetchModels()` in `src/models.ts`, no clack spinner —
+    the chat owns the terminal) and offers the result in a searchable overlay. Picking one
+    applies it and, for a `custom_*` provider, records it in the provider JSON with the
+    API's context limit (`addModelToCustomProviderJson`), so the wizard sees it too
+  - overlays are framed: pi-tui has no border primitive, so `BorderBox` (`src/acp/overlay.ts`,
+    unit-tested) draws a titled box around the SelectList; long lists use `SearchableList`,
+    which adds a filter line and matches by **substring** (the stock `setFilter` is
+    prefix-only, useless for 700 model ids) while forwarding arrows/Enter/Esc
+  - `/edit` (Ctrl+E) suspends the renderer with `tui.stop({ preserveScreen: true })`, runs
+    `$VISUAL`/`$EDITOR`/`vi` on the real terminal via `sh -c '<editor> "$1"'` with the composer's
+    draft as the buffer, then `tui.start()` takes the chat back; a clean exit sends the file's
+    content through the normal `submitPrompt()`, a non-zero exit sends nothing
+  - Ctrl+P opens `/config` (alias `/settings`), Ctrl+O opens `/model`. **Ctrl+M is Enter** (CR is
+    the Ctrl+M control character), so it cannot be a shortcut — it would fire on every prompt
+  - rename → `_goose/unstable/session/rename`; a bare `/rename` (or the menu entry) asks the
+    composer for the title, Esc cancels without exiting
+  - fork → `session/fork` (returns a new session id; probe `scripts/acp-fork-probe.ts`), the
+    copy is renamed `<title> (fork)` and configured like the current session
+  - a set change, session switch or fork is refused while a turn runs; provider/model switches
+    are allowed and apply to the next turn
 - ACP sessions live in the same `sessions.db`, so the wizard's session picker sees them;
   resume uses `session/load` (requires the agent's `loadSession` capability, checked at
   startup) and replays history: `user_message_chunk` is rendered and `messageId`
@@ -157,7 +199,9 @@ warns in the TUI and keeps the ACP default.
 - Esc exits when the prompt is empty; with a non-empty draft it *arms* the exit (a hint
   is printed, the second Esc exits — the editor itself does not handle Esc); with the
   autocomplete menu open Esc stays with the editor, which closes the menu. Ctrl+C exits
-  unconditionally
+  unconditionally. An **open overlay owns Esc** (`tui.hasOverlay()` in the input listener):
+  it closes the menu / rejects the permission prompt instead of quitting the chat — the
+  listener used to intercept it and exit with the dialog still on screen
 - If `goose acp` dies, the chat stops accepting prompts and Esc exits; `send()` refuses
   to write to a closed transport, so no request can hang forever
 - `fs/read_text_file` / `fs/write_text_file` are served for any path the agent asks for
@@ -201,7 +245,8 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts` and the db-backed session listing — no goose needed), `bun scripts/acp-probe.ts`
+  `session-config.ts`, the db-backed session listing and the overlay components — no goose
+  needed), `bun scripts/acp-probe.ts`
   (raw protocol) and `bun scripts/acp-client-smoke.ts` (`src/acp/client.ts` without the TUI; checks the
   `enabledExtensions` and `mcpServers` channels)
 

@@ -1,18 +1,19 @@
 {
   "name": "cgoose",
-  "version": "2.3.0",
-  "description": "TUI for Goose AI sessions - session manager with provider/model selection",
+  "version": "2.4.0",
+  "description": "An ACP terminal UI for Goose \u2014 chat, live configuration, session sets",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
     "start": "bun run src/index.ts",
     "check": "tsc -p tsconfig.json",
-    "test": "bun scripts/acp-extensions-test.ts && bun scripts/acp-session-meta-test.ts && bun scripts/acp-session-config-test.ts && bun scripts/sessions-list-test.ts && bun scripts/acp-client-offline-test.ts",
+    "test": "bun scripts/acp-extensions-test.ts && bun scripts/acp-session-meta-test.ts && bun scripts/acp-session-config-test.ts && bun scripts/sessions-list-test.ts && bun scripts/acp-client-offline-test.ts && bun scripts/acp-overlay-test.ts",
     "test:extensions": "bun scripts/acp-extensions-test.ts",
     "test:session-meta": "bun scripts/acp-session-meta-test.ts",
     "test:session-config": "bun scripts/acp-session-config-test.ts",
     "test:sessions": "bun scripts/sessions-list-test.ts",
     "test:client": "bun scripts/acp-client-offline-test.ts",
+    "test:overlay": "bun scripts/acp-overlay-test.ts",
     "acp:probe": "bun scripts/acp-probe.ts",
     "acp:smoke": "bun scripts/acp-client-smoke.ts"
   },

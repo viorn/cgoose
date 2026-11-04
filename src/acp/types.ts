@@ -121,6 +121,17 @@ export interface NewSessionResponse {
   [key: string]: unknown;
 }
 
+/**
+ * `session/fork` copies an existing conversation into a NEW session and answers
+ * with the same shape as `session/new` (verified live on goose 1.57).
+ */
+export interface ForkSessionRequest {
+  sessionId: string;
+  cwd: string;
+  mcpServers?: unknown[];
+  _meta?: NewSessionMeta;
+}
+
 // ─── session/set_config_option (SACP 11) ─────────────────────────────────────
 
 /**
@@ -162,6 +173,20 @@ export interface LoadSessionRequest {
   mcpServers?: unknown[];
   /** `replayTail` lives at the top level of `_meta` too (goose 1.57). */
   _meta?: { replayTail?: number } & Record<string, unknown>;
+}
+
+/**
+ * `session/load` answers with the same shape as `session/new`, including the
+ * refreshed `configOptions` (verified live on goose 1.57: provider/model/mode/
+ * thinking_effort are all there). cgoose used to discard this response and lose
+ * the model list on every resume — that is why the configuration menus had
+ * nothing to show for a resumed session.
+ */
+export interface LoadSessionResponse {
+  modes?: unknown;
+  configOptions?: SessionConfigOption[];
+  _meta?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 // ─── session/prompt ──────────────────────────────────────────────────────────

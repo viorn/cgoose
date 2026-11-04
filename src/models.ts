@@ -62,7 +62,15 @@ function extractContextLimit(model: any): number | undefined {
 
 // ─── OpenAI API model fetcher ────────────────────────────────────────────────
 
-export async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiModelInfo[]> {
+/**
+ * Fetch the provider's model list without touching the terminal.
+ *
+ * The chat TUI drives its own rendering and owns the alternate screen, so it
+ * must not let `@clack/prompts` paint a spinner over it — it calls this and
+ * reports the result in the transcript. `fetchModelsFromApi` below keeps the
+ * spinner for the wizard.
+ */
+export async function fetchModels(provider: ProviderInfo): Promise<ApiModelInfo[]> {
   if (!provider.authToken) {
     const envHint = provider.apiKeyEnv || `${provider.name.replace(/^custom_/, "").toUpperCase()}_API_KEY`;
     throw new Error(
@@ -76,9 +84,6 @@ export async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiMod
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (provider.authToken) headers["Authorization"] = `Bearer ${provider.authToken}`;
 
-  const s = spinner();
-  s.start(`Fetching models from ${provider.baseUrl}...`);
-
   const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
   if (response.status === 401 || response.status === 403) {
     const envHint = provider.apiKeyEnv || `${provider.name.replace(/^custom_/, "").toUpperCase()}_API_KEY`;
@@ -91,11 +96,22 @@ export async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiMod
   if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
   const data: any = await response.json();
-  const models: ApiModelInfo[] = (data.data || [])
+  return (data.data || [])
     .map((m: any) => ({ id: m.id, contextLimit: extractContextLimit(m) }))
     .sort((a: ApiModelInfo, b: ApiModelInfo) => a.id.localeCompare(b.id));
+}
 
-  const withCtx = models.filter((m) => m.contextLimit !== undefined).length;
-  s.stop(`Found ${models.length} models${withCtx > 0 ? ` (${withCtx} with context limit)` : ""}`);
-  return models;
+/** Wizard flavour: same fetch, with the clack spinner and its summary line. */
+export async function fetchModelsFromApi(provider: ProviderInfo): Promise<ApiModelInfo[]> {
+  const s = spinner();
+  s.start(`Fetching models from ${provider.baseUrl}...`);
+  try {
+    const models = await fetchModels(provider);
+    const withCtx = models.filter((m) => m.contextLimit !== undefined).length;
+    s.stop(`Found ${models.length} models${withCtx > 0 ? ` (${withCtx} with context limit)` : ""}`);
+    return models;
+  } catch (error) {
+    s.stop(`Failed: ${String((error as Error)?.message ?? error)}`);
+    throw error;
+  }
 }
