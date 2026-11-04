@@ -781,9 +781,18 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // never wipe the model info).
   let usagePart = "";
   const renderStatus = (): void => {
-    statusLine.setText([pc.dim(`${currentProvider}/${currentModel}`), usagePart ? pc.dim(usagePart) : ""]
-      .filter(Boolean)
-      .join(pc.dim("  ")));
+    // The set decides the system prompt and the extension list, so its short
+    // label sits with the pair it applies to (the header carries the long form).
+    const setPart = currentSetLabel ? `set: ${currentSetLabel}` : "";
+    statusLine.setText(
+      [
+        pc.dim(`${currentProvider}/${currentModel}`),
+        setPart ? pc.dim(setPart) : "",
+        usagePart ? pc.dim(usagePart) : "",
+      ]
+        .filter(Boolean)
+        .join(pc.dim("  ")),
+    );
     tui.requestRender();
   };
   const renderHeader = (): void => {
@@ -946,6 +955,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     currentSetLabel = useDefault ? "Default" : label;
 
     renderHeader();
+    renderStatus();
     tui.requestRender();
   };
 
@@ -988,6 +998,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       // extensions are brought in line with it, exactly like on resume.
       await reconcileSessionExtensions(sessionId, "switched session");
       renderHeader();
+      renderStatus();
       tui.requestRender();
     } catch (error) {
       transcript.addChild(new Text(pc.yellow(`⚠ Failed to switch session: ${String((error as Error)?.message ?? error)}`), 1, 0));
@@ -1017,6 +1028,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       await applySessionConfig(client, sessionId, { provider: currentProvider, model: currentModel }, {});
       await applySystemPrompt(sessionId, currentSet?.systemPrompt ?? "");
       renderHeader();
+      renderStatus();
       tui.requestRender();
     } catch (error) {
       transcript.addChild(new Text(pc.yellow(`⚠ Failed to create new session: ${String((error as Error)?.message ?? error)}`), 1, 0));
@@ -1176,6 +1188,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       }
       await reconcileSessionExtensions(sessionId, "forked session");
       renderHeader();
+      renderStatus();
     } catch (error) {
       transcript.addChild(new Text(pc.yellow(`⚠ Fork failed: ${String((error as Error)?.message ?? error)}`), 1, 0));
     }

@@ -111,8 +111,8 @@ rossii spawns `goose acp` and drives it as an ACP client. One command resumes a 
 set/provider/model from the project's history, and keeps everything changeable from inside the chat.
 
 - **Streaming** — assistant text is rendered as it arrives, thinking blocks are shown collapsed,
-  tool calls and their results are printed inline, and the status bar tracks context usage, tokens
-  and cost.
+  tool calls and their results are printed inline, and the status bar tracks the current set, context
+  usage, tokens and cost.
 - **Its own screen** — the chat owns the alternate screen and scrolls the transcript itself
   (mouse wheel, PgUp/PgDn, Ctrl+Shift+F to search) while the composer stays pinned at the bottom.
   Streaming never yanks the view back. On exit the transcript is printed to the normal screen, so
