@@ -129,7 +129,13 @@ warns in the TUI and keeps the ACP default.
     and the chat says so
   - `session/load` ignores `enabledExtensions`/`mcpServers`; on resume the loaded list is
     reconciled with `_goose/unstable/session/extensions/{list,add,remove}` (remove's field
-    name differs between versions — `extensionKey` vs `name`, see `src/acp/custom.ts`)
+    name differs between versions — `extensionKey` vs `name`, see `src/acp/custom.ts`).
+    Matching is by extension NAME (goose normalizes keys: `Extension Manager` →
+    `extensionmanager`), removal uses the key
+  - **Default on resume** is reconciled too: `planProfileExtensions(listGooseExtensions())`
+    rebuilds the profile from config.yaml (goose has no "reset to profile" request), so a
+    session created with None actually gains the profile extensions; a profile entry ACP
+    cannot express (inline env) is left untouched and reported
   - after creating a session the chat reads the real extension list and warns only if profile
     extensions leaked in (a goose that ignores the field) or expected ones are missing
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`

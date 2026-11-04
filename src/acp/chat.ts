@@ -16,6 +16,9 @@
  *     versions keep working
  *   - resume: `session/load` ignores both channels, so the loaded set is
  *     reconciled with `_goose/unstable/session/extensions/{list,add,remove}`
+ *     — including Default, whose profile is rebuilt from config.yaml and
+ *     reconciled the same way (otherwise a resumed `None` session would keep
+ *     its empty set forever: goose has no "reset to profile" request)
  *   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
  * The old blanket "profile is always loaded" warning is gone: the chat checks
  * the session's real extension list and warns only when the profile leaked in.
@@ -28,7 +31,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import pc from "picocolors";
 
-import { buildMcpServers, diffExtensions, extensionName, listedExtensionName, planGooseExtensions } from "./extensions";
+import {
+  buildMcpServers,
+  diffExtensions,
+  extensionName,
+  listedExtensionName,
+  planGooseExtensions,
+  planProfileExtensions,
+} from "./extensions";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_TURN_TIMEOUT_MS,
@@ -63,6 +73,7 @@ import {
   setSessionSystemPrompt,
 } from "./custom";
 import type { SessionSet } from "../cgoose-config";
+import { listGooseExtensions } from "../goose-extensions";
 import type {
   GooseExtension,
   PromptResponse,
@@ -251,18 +262,31 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // A spec with inline env values cannot be expressed through goose's extension
   // API, so such a set falls back to the additive behaviour.
   const exactSet = !opts.useDefaultProfile && plan.unsupported.length === 0;
+
+  // Default on RESUME needs the same treatment even though a new Default session
+  // simply lets goose load its profile: `session/load` restores the stored set
+  // (say, the `None` the session was created with) and goose has no
+  // "reset to profile" request. So the profile is rebuilt from config.yaml and
+  // reconciled like an exact set — that is what makes switching a session to
+  // Default actually bring the extensions back.
+  const profilePlan = opts.useDefaultProfile ? planProfileExtensions(listGooseExtensions()) : null;
+
+  /** The extension list this session must end up with. */
+  const desiredExtensions: GooseExtension[] = profilePlan ? profilePlan.extensions : plan.extensions;
+  /** Enabled profile extensions ACP cannot carry (inline env): leave untouched. */
+  const protectedNames = new Set((profilePlan?.unsupported ?? []).map((entry) => entry.name));
   const extensionWarnings = new Set<string>();
 
   /** Extensions the session MUST have (exactly what the set lists). */
   function requiredExtensions(): GooseExtension[] {
-    return plan.extensions;
+    return desiredExtensions;
   }
 
   /** Extensions the session is allowed to have on top. Some goose builds inject
    *  their own `developer` into an ACP session; it must not be reported as a
    *  profile leak, removed, or added when a set does not list it. */
   function allowedExtensionNames(): Set<string> {
-    const allowed = new Set(plan.extensions.map(extensionName));
+    const allowed = new Set(desiredExtensions.map(extensionName));
     allowed.add("developer");
     return allowed;
   }
@@ -313,21 +337,31 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       noteExtensionWarning(`cannot read the session's extensions: ${String((error as Error)?.message ?? error)}`);
       return;
     }
-    // `developer` counts as an expected name so reconciliation never removes it;
-    // it is filtered out of the additions below, because a set that does not
-    // list it must not gain it on resume.
-    const requiredNames = new Set(requiredExtensions().map(extensionName));
-    const expected = [
-      ...[...allowedExtensionNames()].map((name) => ({ type: "builtin" as const, name })),
-    ];
-    const diff = diffExtensions(expected, actual);
-    const add = diff.add.filter((extension) => requiredNames.has(extensionName(extension)));
+    // The desired list is compared as-is: adding an MCP server must send its
+    // real `{type:"mcp", server}` shape, not a placeholder builtin with the
+    // same name.
+    const desired = requiredExtensions();
+    const desiredNames = new Set(desired.map(extensionName));
+    // `developer` counts as expected so reconciliation never removes it; it is
+    // filtered out of the additions below, because a set that does not list it
+    // must not gain it on resume (the profile, by contrast, lists it itself).
+    const expected: GooseExtension[] = desiredNames.has("developer")
+      ? desired
+      : [...desired, { type: "builtin", name: "developer" }];
+    // Profile entries ACP cannot express are left exactly as they are: not
+    // re-added (impossible), not removed (that would silently drop them).
+    const considered = actual.filter((entry) => {
+      const name = listedExtensionName(entry);
+      return name === null || !protectedNames.has(name);
+    });
+    const diff = diffExtensions(expected, considered);
+    const add = diff.add.filter((extension) => desiredNames.has(extensionName(extension)));
     const remove = diff.remove;
-    for (const key of remove) {
+    for (const entry of remove) {
       try {
-        await removeSessionExtension(client, id, key);
+        await removeSessionExtension(client, id, entry.key);
       } catch (error) {
-        noteExtensionWarning(`could not remove extension "${key}": ${String((error as Error)?.message ?? error)}`);
+        noteExtensionWarning(`could not remove extension "${entry.name}": ${String((error as Error)?.message ?? error)}`);
       }
     }
     for (const extension of add) {
@@ -342,9 +376,11 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     if (add.length > 0 || remove.length > 0) {
       const parts: string[] = [];
       if (add.length > 0) parts.push(`added ${add.map(extensionName).join(", ")}`);
-      if (remove.length > 0) parts.push(`removed ${remove.join(", ")}`);
+      if (remove.length > 0) parts.push(`removed ${remove.map((entry) => entry.name).join(", ")}`);
       transcript.addChild(new Text(
-        pc.yellow(`set applied to the resumed session: ${parts.join("; ")}`),
+        pc.yellow(
+          `${profilePlan ? "default profile" : "set"} applied to the resumed session: ${parts.join("; ")}`,
+        ),
         1, 0,
       ));
     }
@@ -930,10 +966,17 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       closeThought();
       // `session/load` restores the extension set stored in the session, so the
       // selected set would be ignored on resume. Reconcile it instead: the set
-      // is the source of truth (classic mode cannot do that — it drops the
-      // extension flags on resume).
-      if (exactSet) {
+      // (or, for Default, the profile rebuilt from config.yaml) is the source
+      // of truth (classic mode cannot do that — it drops the extension flags on
+      // resume).
+      if (exactSet || profilePlan) {
         await reconcileSessionExtensions(sessionId);
+        if (profilePlan && profilePlan.unsupported.length > 0) {
+          noteExtensionWarning(
+            "the default profile has extensions ACP cannot load, so they were left untouched: " +
+            profilePlan.unsupported.map((entry) => `${entry.name} (${entry.reason})`).join(", "),
+          );
+        }
       }
       tui.requestRender();
     }

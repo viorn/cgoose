@@ -69,7 +69,15 @@
     только если профиль протёк или чего-то не хватает (вместо прежнего «профиль всегда грузится»);
   - **resume**: `extensions/list` → `diffExtensions` → `add`/`remove`, то есть сет применяется и
     к возобновляемой сессии (classic так не умеет). Изменения печатаются в транскрипте.
+  - **resume с Default**: `session/load` возвращает сохранённый набор, а запроса «сбросить на
+    профиль» у goose нет, поэтому профиль пересобирается из `config.yaml`
+    (`listGooseExtensions()` → `planProfileExtensions()`) и применяется тем же diff'ом. Иначе
+    сессия, созданная с None, при выборе Default оставалась без расширений.
 - `developer` считается «разрешённым»: не добавляется, не удаляется и не считается утечкой.
+- Сопоставление в diff — по **имени** расширения: goose нормализует ключи
+  (`{type:"platform", name:"Extension Manager"}` → ключ `extensionmanager`), поэтому сравнение
+  по ключу заново добавляло бы такую запись на каждом resume. Удаление — по ключу (имя поля
+  отличается между версиями, см. `removeSessionExtension`).
 
 ## Побочный фикс
 
@@ -81,7 +89,15 @@
 
 ## Проверки
 
-- `bun run check`, `bun run test` — зелёные (23 + 11 проверок, включая new: plan/diff/remove-fallback).
+- `bun run check`, `bun run test` — зелёные (27 + 11 проверок, включая plan/diff/remove-fallback,
+  пересборку профиля и сопоставление по имени).
+- Живой прогон на goose 1.57.0 (проверено сценарием «None → resume → Default»):
+  `new` с `[]` → `(none)`, `load` → `(none)`, diff профиля → добавлены все 9
+  (`Extension Manager, analyze, apps, developer, scheduler, skills, summon, todo, tom`),
+  повторный diff — no-op, обратно в None — удалены все, снова Default — добавлены все.
+- TUI (tmux, без отправки промпта): сессия, созданная с None, после resume с Default печатает
+  «default profile applied to the resumed session: added …», и в `sessions.extension_data`
+  оказываются те же 9 расширений; resume с None удаляет всё, кроме `developer`.
 - Живые прогоны через TUI (pty): None → сессия **без расширений**; сет `analyze + stdio-mcp` →
   ровно `builtin:analyze, stdio:e2e-mcp`; resume профильной сессии с None → 7 расширений удалено (после теста набор восстановлен).
 - `bun run acp:smoke` обновлён: пустой `enabledExtensions` = «профиль не протёк».

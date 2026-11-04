@@ -232,12 +232,40 @@ export interface ListedExtension {
   extension?: any;
 }
 
-/** Name of a listed extension entry. */
+/**
+ * Name of a listed extension entry, used to COMPARE with the desired list.
+ *
+ * The extension's own name is preferred over `extensionKey`: goose normalizes
+ * keys (adding `{type:"platform", name:"Extension Manager"}` yields the key
+ * `extensionmanager`), so matching on the key would re-add the entry on every
+ * resume.
+ */
 export function listedExtensionName(entry: ListedExtension): string | null {
-  if (entry.extensionKey) return entry.extensionKey;
   const ext = entry.extension;
   if (ext?.server?.name) return ext.server.name;
-  return ext?.name ?? entry.name ?? null;
+  if (ext?.name) return ext.name;
+  return entry.name ?? entry.extensionKey ?? null;
+}
+
+/** Key goose uses to remove this entry (falls back to the name). */
+export function listedExtensionKey(entry: ListedExtension): string | null {
+  return entry.extensionKey ?? listedExtensionName(entry);
+}
+
+/**
+ * One entry of goose's config.yaml `extensions:` map (the shape produced by
+ * `listGooseExtensions()` in ../goose-extensions.ts).
+ */
+export interface ProfileExtensionEntry {
+  key: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  cmd?: string;
+  args?: string[];
+  envs?: Record<string, string>;
+  uri?: string;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -289,28 +317,112 @@ export function planGooseExtensions(specs: {
 /**
  * Compare the desired extension list with what a session actually has.
  *
- * `expected` must already include the implicit `developer` extension goose
- * adds when `--with-builtin` is empty, otherwise reconciliation would remove
- * the agent's only editing tool.
+ * Matching is by extension NAME (`listedExtensionName`), while removals use the
+ * key goose expects (`listedExtensionKey`).
  */
 export function diffExtensions(
   expected: GooseExtension[],
   actual: ListedExtension[],
-): { add: GooseExtension[]; remove: string[] } {
+): { add: GooseExtension[]; remove: { name: string; key: string }[] } {
   const wanted = new Map<string, GooseExtension>();
   for (const extension of expected) wanted.set(extensionName(extension), extension);
 
-  const present = new Set<string>();
+  const present = new Map<string, string>(); // name → removal key
   for (const entry of actual) {
     const name = listedExtensionName(entry);
-    if (name) present.add(name);
+    if (!name) continue;
+    present.set(name, listedExtensionKey(entry) ?? name);
   }
 
   const add = [...wanted.entries()]
     .filter(([name]) => !present.has(name))
     .map(([, extension]) => extension);
-  const remove = [...present].filter((name) => !wanted.has(name));
+  const remove = [...present.entries()]
+    .filter(([name]) => !wanted.has(name))
+    .map(([name, key]) => ({ name, key }));
 
   return { add, remove };
+}
+
+/**
+ * Result of rebuilding goose's default profile: the typed list goose accepts,
+ * plus every enabled entry that cannot be expressed through its extension API
+ * (reported by extension NAME, which is what the diff matches on).
+ */
+export interface ProfileExtensionsPlan {
+  extensions: GooseExtension[];
+  unsupported: { name: string; reason: string }[];
+}
+
+/**
+ * Rebuild the Default profile (goose's enabled extensions from config.yaml) as
+ * a typed extension list, so switching a resumed session to "Default" can
+ * actually load the profile: `session/load` restores the stored set and goose
+ * has no "reset to profile" request.
+ *
+ * Inline env values cannot travel through goose's extension API, so such an
+ * entry is reported in `unsupported`; the caller must leave it alone (neither
+ * add nor remove it) instead of silently dropping it.
+ */
+export function planProfileExtensions(entries: ProfileExtensionEntry[]): ProfileExtensionsPlan {
+  const used = new Set<string>();
+  const extensions: GooseExtension[] = [];
+  const unsupported: { name: string; reason: string }[] = [];
+  const unsupportedName = (entry: ProfileExtensionEntry): string => entry.name || entry.key;
+
+  for (const entry of entries) {
+    if (!entry.enabled) continue;
+    const type = (entry.type || "stdio").toLowerCase();
+
+    if (type === "builtin" || type === "platform") {
+      const name = entry.name || entry.key;
+      if (!name || used.has(name)) continue;
+      used.add(name);
+      extensions.push({ type: type === "platform" ? "platform" : "builtin", name });
+      continue;
+    }
+
+    if (type === "streamable_http" || type === "streamable-http") {
+      if (!entry.uri) {
+        unsupported.push({ name: unsupportedName(entry), reason: 'no "uri"' });
+        continue;
+      }
+      const name = uniqueName(entry.name || entry.key, used);
+      extensions.push({
+        type: "mcp",
+        server: {
+          type: "http",
+          name,
+          url: entry.uri,
+          headers: Object.entries(entry.headers ?? {}).map(([name, value]) => ({ name, value })),
+        },
+      });
+      continue;
+    }
+
+    if (type === "stdio") {
+      const envs = Object.entries(entry.envs ?? {});
+      if (envs.length > 0) {
+        // Same limitation as session sets: goose wants `envKeys` referencing
+        // its secret store, never inline values.
+        unsupported.push({ name: unsupportedName(entry), reason: "inline env values" });
+        continue;
+      }
+      if (!entry.cmd) {
+        unsupported.push({ name: unsupportedName(entry), reason: 'no "cmd"' });
+        continue;
+      }
+      const name = uniqueName(entry.name || entry.key, used);
+      extensions.push({
+        type: "mcp",
+        server: { type: "stdio", name, command: entry.cmd, args: entry.args ?? [], env: [] },
+      });
+      continue;
+    }
+
+    unsupported.push({ name: unsupportedName(entry), reason: `unsupported type "${entry.type}"` });
+  }
+
+  return { extensions, unsupported };
 }
 

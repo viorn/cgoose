@@ -16,6 +16,7 @@ import {
   parseHttpSpec,
   parseStdioSpec,
   planGooseExtensions,
+  planProfileExtensions,
   splitNamePrefix,
 } from "../src/acp/extensions";
 import type { GooseExtension } from "../src/acp/types";
@@ -197,7 +198,7 @@ const checks: Check[] = [
     ];
     const { add, remove } = diffExtensions(expected, actual);
     assert.deepEqual(add.map(extensionName), ["analyze", "fetch"]);
-    assert.deepEqual(remove, ["todo"]);
+    assert.deepEqual(remove, [{ name: "todo", key: "todo" }]);
   }],
 
   ["diffExtensions: identical sets are a no-op", () => {
@@ -205,6 +206,56 @@ const checks: Check[] = [
     const { add, remove } = diffExtensions(expected, [{ extensionKey: "developer" }]);
     assert.deepEqual(add, []);
     assert.deepEqual(remove, []);
+  }],
+
+  ["diffExtensions: matching is by name, removal by key", () => {
+    // goose normalizes the key of `{type:"platform", name:"Extension Manager"}`
+    // to `extensionmanager`, so comparing keys would re-add it on every resume.
+    const expected: GooseExtension[] = [{ type: "platform", name: "Extension Manager" }];
+    const actual = [
+      { extensionKey: "extensionmanager", extension: { type: "platform", name: "Extension Manager" } },
+      { extensionKey: "tom", extension: { type: "platform", name: "tom" } },
+    ];
+    const { add, remove } = diffExtensions(expected, actual);
+    assert.deepEqual(add, []);
+    assert.deepEqual(remove, [{ name: "tom", key: "tom" }]);
+  }],
+
+  ["planProfileExtensions: rebuilds the config.yaml profile", () => {
+    const { extensions, unsupported } = planProfileExtensions([
+      { key: "extensionmanager", name: "Extension Manager", type: "platform", enabled: true },
+      { key: "developer", name: "developer", type: "platform", enabled: true },
+      { key: "summarize", name: "summarize", type: "platform", enabled: false },
+      { key: "fetch", name: "fetch", type: "streamable_http", enabled: true, uri: "https://x/mcp" },
+      { key: "mcpls", name: "mcpls", type: "stdio", enabled: true, cmd: "mcpls", args: ["--stdio"] },
+    ]);
+    assert.deepEqual(
+      extensions.map((extension) => `${extension.type}:${extensionName(extension)}`),
+      ["platform:Extension Manager", "platform:developer", "mcp:fetch", "mcp:mcpls"],
+    );
+    const http = extensions[2] as { server: { type: string; url: string } };
+    assert.equal(http.server.type, "http");
+    assert.equal(http.server.url, "https://x/mcp");
+    const stdio = extensions[3] as { server: { type: string; command: string; args: string[] } };
+    assert.equal(stdio.server.type, "stdio");
+    assert.equal(stdio.server.command, "mcpls");
+    assert.deepEqual(stdio.server.args, ["--stdio"]);
+    assert.deepEqual(unsupported, []);
+  }],
+
+  ["planProfileExtensions: inline env is reported by name", () => {
+    const { extensions, unsupported } = planProfileExtensions([
+      { key: "dbenv", name: "Database (env)", type: "stdio", enabled: true, cmd: "db", envs: { DSN: "x" } },
+      { key: "broken", name: "broken", type: "stdio", enabled: true },
+      { key: "weird", name: "weird", type: "magic", enabled: true },
+      { key: "off", name: "off", type: "stdio", enabled: false, cmd: "nope" },
+    ]);
+    assert.deepEqual(extensions, []);
+    assert.deepEqual(unsupported.map((entry) => entry.name), ["Database (env)", "broken", "weird"]);
+  }],
+
+  ["planProfileExtensions: empty profile means no extensions", () => {
+    assert.deepEqual(planProfileExtensions([]), { extensions: [], unsupported: [] });
   }],
 ];
 
