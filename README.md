@@ -95,7 +95,7 @@ stdioExtensions: ["mcpls --trust-project-config"]     # ad-hoc stdio commands
 - Sets are discoverable, editable, and deletable via the TUI
 
 #### Set choice: None vs Default vs a set
-- **None** — no extensions at all (`--no-profile` and nothing else): a bare agent without shell/file tools (on goose 1.50 chat mode ends up with no extensions at all; some builds add their own `developer`, which cgoose tolerates)
+- **None** — no extensions at all (`--no-profile` and nothing else): a bare agent without shell/file tools (on goose 1.50/1.57 chat mode ends up with no extensions at all; some builds add their own `developer`, which cgoose tolerates)
 - **Default** — leave the profile alone: Goose loads every extension enabled in `~/.config/goose/config.yaml` (classic `goose session` behavior)
 - **&lt;set&gt;** — exactly the builtins/extensions the set lists
 
@@ -172,7 +172,7 @@ The TUI still discovers installed recipes via `goose recipe list --format json`,
 - The chat owns the alternate screen: the transcript (header included) scrolls inside cgoose (mouse wheel, PgUp/PgDn, Ctrl+Shift+F search) while the composer stays pinned, and streamed updates no longer pull the view back to the bottom. On exit the final transcript is printed back to the terminal's normal screen, so it stays in the scrollback. `CGOOSE_CHAT_MAIN_SCREEN=1` restores the old inline renderer (terminal owns scrollback, any repaint pulls the view down while a turn runs)
 - Permissions are shown as a SelectList overlay; Esc/Ctrl+C during a turn cancels it. Esc exits when the prompt is empty (with a draft it arms the exit — press it twice), Ctrl+C always exits
 - Two watchdogs bound a turn: no agent activity for 5 minutes cancels it (`CGOOSE_ACP_IDLE_TIMEOUT_MS`), a single turn is capped at 4 hours (`CGOOSE_ACP_PROMPT_TIMEOUT_MS`)
-- Requires a goose with the `acp` subcommand (1.50+ verified); without `_meta.enabledExtensions` support the profile loads alongside the set and the chat says so. No `acp` subcommand at all → cgoose falls back to the classic `goose session` TUI
+- Requires a goose with the `acp` subcommand (1.50 and 1.57 verified); without `_meta.enabledExtensions` support the profile loads alongside the set and the chat says so. No `acp` subcommand at all → cgoose falls back to the classic `goose session` TUI
 - Verification: `bun run test` (no goose needed), `bun run acp:probe`, `bun run acp:smoke`
 
 ---

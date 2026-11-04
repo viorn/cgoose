@@ -2,7 +2,12 @@
 
 - **Дата:** 2026-11-04
 - **Статус:** реализовано (`src/acp/extensions.ts`, `src/acp/chat.ts`, `src/acp/custom.ts`, тесты, доки)
-- **Проверено вживую:** установленный goose **1.50.0** (сверено с исходниками `~/sources/goose`, ветка 2.0-rc)
+- **Проверено вживую:** goose **1.50.0** и **1.57.0** (сверено с исходниками `~/sources/goose`, ветка 2.0-rc)
+- **Перепроверка на 1.57.0 (2026-11-04, после обновления goose):** все выводы ниже подтвердились — `[]` → ни одного
+  расширения, typed builtins+mcp → ровно они (28 инструментов через `tools/list`), `mcpServers` игнорируется при
+  наличии `enabledExtensions`, вложенный `_meta.goose.*` по-прежнему игнорируется, inline env по-прежнему
+  отклоняется, `extensions/remove` ждёт `extensionKey` (на `name` — `missing field \`extensionKey\``),
+  `session/load` по-прежнему игнорирует `enabledExtensions`
 
 ## Проблема
 

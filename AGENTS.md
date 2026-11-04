@@ -59,7 +59,7 @@ stdioExtensions: ["mcpls --trust-project-config"]   # raw --with-extension comma
 ### "None" vs "Default" vs a set
 
 - **None** (`""`) → classic: `--no-profile` only, a session with **no extensions at all**;
-  chat: `_meta.enabledExtensions: []` — no profile and (on 1.50.0) no extensions at all; some builds
+  chat: `_meta.enabledExtensions: []` — no profile and (1.50.0 / 1.57.0) no extensions at all; some builds
   inject their own `developer`, which cgoose treats as allowed but never adds or removes
 - **Default** (`__default__` sentinel in `src/launcher.ts`) → no flags at all, so Goose loads the profile from `~/.config/goose/config.yaml`; chat sends no `enabledExtensions` at all
 - **Set** → exactly the flags/typed list derived from the set
@@ -113,7 +113,7 @@ warns in the TUI and keeps the ACP default.
   transcript back to the normal screen, so scrollback keeps the conversation.
   `CGOOSE_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
   scrollback, so any repaint — spinner, streamed chunk — pulls the view to the bottom)
-- Session sets in chat mode (verified live on goose 1.50.0 via the probes described in
+- Session sets in chat mode (verified live on goose 1.50.0 and 1.57.0 via the probes described in
   `plans/acp-mode-review5.md`):
   - builtins → `goose acp --with-builtin <names>` **and** `{type:"builtin",name}` entries in the
     typed list (goose dedupes by name)
@@ -160,7 +160,7 @@ warns in the TUI and keeps the ACP default.
   - `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 4 h) — absolute cap on a single turn; on
     timeout the client also sends `session/cancel` and the UI reports the error
 - Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.provider` (top level — goose reads session fields there, only initialize capabilities live under `_meta.goose`); `_meta.sessionTitle` + `_meta.client` name the session and make it a normal `user` session
-- Requires a goose with the `acp` subcommand (1.50.0 verified; `_goose/unstable/*` methods degrade
+- Requires a goose with the `acp` subcommand (1.50.0 and 1.57.0 verified; `_goose/unstable/*` methods degrade
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, no goose needed),
