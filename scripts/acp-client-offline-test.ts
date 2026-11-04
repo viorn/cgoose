@@ -10,6 +10,7 @@
  *   - stderr chunks are joined into whole lines
  *   - an agent that dies outside stop() cannot hang a request
  *   - chat watchdog timeouts (src/acp/timeouts.ts) honour 0 and warn on junk
+ *   - the `session/new` meta stays flat on the wire (no `provider`, no `goose` wrapper)
  */
 
 import assert from "node:assert/strict";
@@ -17,6 +18,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AcpClient } from "../src/acp/client";
+import { newSessionMeta } from "../src/acp/session-meta";
 import { listSessionExtensions, removeSessionExtension } from "../src/acp/custom";
 import { listedExtensionName } from "../src/acp/extensions";
 import {
@@ -63,6 +65,8 @@ rl.on("line", (line) => {
   if (msg.method === "initialize") {
     send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
   } else if (msg.method === "session/new") {
+    // Report the meta back so the test can assert its shape on the wire.
+    process.stderr.write("NEW_SESSION_META=" + JSON.stringify(msg.params._meta ?? null) + NL);
     send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "s1" } });
   } else if (msg.method === "session/load") {
     notify("session/update", { sessionId: "s1", update: { sessionUpdate: "user_message_chunk", messageId: "u1", content: { type: "text", text: "hello " } } });
@@ -144,6 +148,25 @@ client.setPromptHandlers({
 const info = await client.initialize({ fs: { readTextFile: true } });
 assert.equal(info.agentCapabilities?.loadSession, true);
 assert.equal(client.supportsLoadSession(), true);
+
+// `session/new` meta must reach the agent flat and without `provider`: goose reads
+// session fields at the top level of `_meta`, and `_meta.provider` would make it
+// take the model from the provider registry instead of GOOSE_MODEL
+// (see scripts/acp-session-meta-test.ts).
+stderr.length = 0;
+await client.newSession({
+  cwd: process.cwd(),
+  mcpServers: [],
+  _meta: newSessionMeta({ sessionTitle: "wire-check" }),
+});
+await new Promise((resolve) => setTimeout(resolve, 80));
+const metaLine = stderr.find((line) => line.startsWith("NEW_SESSION_META="));
+assert.ok(metaLine, "the fake agent must report the session/new meta");
+assert.deepEqual(
+  JSON.parse(metaLine.slice("NEW_SESSION_META=".length)),
+  { client: "cgoose", sessionTitle: "wire-check" },
+);
+console.log("✅ session/new meta is flat on the wire (client/sessionTitle, no provider)");
 
 // session/load replays user and assistant messages with messageId boundaries
 await client.loadSession({ cwd: process.cwd(), sessionId: "s1", mcpServers: [] });

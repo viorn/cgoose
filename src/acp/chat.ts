@@ -20,6 +20,9 @@
  *     reconciled the same way (otherwise a resumed `None` session would keep
  *     its empty set forever: goose has no "reset to profile" request)
  *   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
+ *   - provider/model → `session/set_config_option` (provider first, then the
+ *     model it resets): works on both new and resumed sessions, unlike
+ *     `_meta.provider` or the env alone (see ./session-config.ts)
  * The old blanket "profile is always loaded" warning is gone: the chat checks
  * the session's real extension list and warns only when the profile leaked in.
  * Two watchdogs bound a turn (idle + hard cap, see ./timeouts.ts).
@@ -74,10 +77,13 @@ import {
 } from "./custom";
 import type { SessionSet } from "../cgoose-config";
 import { listGooseExtensions } from "../goose-extensions";
+import { newSessionMeta } from "./session-meta";
+import { applySessionConfig, optionValue, type SessionConfig } from "./session-config";
 import type {
   GooseExtension,
   PromptResponse,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionNotification,
 } from "./types";
 
@@ -89,10 +95,16 @@ export interface AcpChatOptions {
   isNew: boolean;
   /** On resume: goose session id (same ids as `goose session list`). */
   resumeSessionId?: string;
-  /** Session title for session/new (`_meta.goose.sessionTitle`). */
+  /** Session title for session/new (`_meta.sessionTitle`, top level). */
   sessionTitle?: string;
   provider: string;
   model: string;
+  /**
+   * On resume: the provider/model the session row currently holds. Both are
+   * then applied through `session/set_config_option`, which sends a request
+   * only when the wizard's choice actually differs (see ./session-config.ts).
+   */
+  resumeConfig?: SessionConfig;
   /** Resolved session set (undefined = None / Default). */
   set?: SessionSet;
   /** True when no set means "load goose's default profile" (`__default__`). */
@@ -226,6 +238,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   let agentDead = false;
   let lastFlush = 0;
   let sessionId: string | null = null;
+  /** Config options goose resolved when the session was created (has the model). */
+  let newSessionConfigOptions: SessionConfigOption[] | undefined;
   let sessionTitle: string | undefined = opts.sessionTitle;
 
   // Turn watchdogs (see ./timeouts.ts). `lastAgentActivity` is refreshed by
@@ -934,14 +948,14 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         // `_meta.goose` object is only understood for initialize capabilities).
         // `client` also marks the session as user-created, which makes it
         // appear in `goose session list` and resolvable by `--name`.
-        _meta: {
-          client: "cgoose",
+        // `provider` is left out on purpose — see `./session-meta.ts`.
+        _meta: newSessionMeta({
           sessionTitle: opts.sessionTitle,
-          provider: opts.provider,
           ...(exactSet ? { enabledExtensions: plan.extensions } : {}),
-        },
+        }),
       });
       sessionId = response.sessionId;
+      newSessionConfigOptions = response.configOptions;
       if (exactSet) {
         await verifySessionExtensions(sessionId);
       } else if (!opts.useDefaultProfile && plan.unsupported.length > 0) {
@@ -983,6 +997,40 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
             profilePlan.unsupported.map((entry) => `${entry.name} (${entry.reason})`).join(", "),
           );
         }
+      }
+      tui.requestRender();
+    }
+
+    // The wizard's provider/model are the source of truth, exactly like classic
+    // mode's `--provider`/`--model` on both new and resumed sessions. `session/new`
+    // resolves them from GOOSE_PROVIDER/GOOSE_MODEL, but `session/load` keeps the
+    // pair stored in the session row and ignores the env — so the model picked on
+    // resume would be lost. Applying them through `session/set_config_option`
+    // (the ACP-native switch goose itself uses) fixes both cases and is also what
+    // makes `_meta.provider` unnecessary. Non-fatal by design: a session with a
+    // different model is still usable, so problems surface as a warning.
+    if (sessionId) {
+      const outcome = await applySessionConfig(
+        client,
+        sessionId,
+        { provider: opts.provider, model: opts.model },
+        opts.isNew
+          ? {
+              provider: optionValue(newSessionConfigOptions, "provider"),
+              model: optionValue(newSessionConfigOptions, "model"),
+            }
+          : {
+              provider: opts.resumeConfig?.provider ?? undefined,
+              model: opts.resumeConfig?.model ?? undefined,
+            },
+      );
+      if (outcome.warning) {
+        transcript.addChild(new Text(pc.yellow(`⚠ ${outcome.warning}`), 1, 0));
+      } else if (outcome.applied.length > 0) {
+        transcript.addChild(new Text(
+          pc.dim(`⚙ Applied ${outcome.applied.map((s) => s.configId).join("+")} via ACP: ${outcome.provider}/${outcome.model}`),
+          1, 0,
+        ));
       }
       tui.requestRender();
     }

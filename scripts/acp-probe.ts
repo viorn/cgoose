@@ -13,6 +13,8 @@
 
 import { spawn } from "node:child_process";
 
+import { newSessionMeta } from "../src/acp/session-meta";
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const BIN = process.env.CGOOSE_ACP_BIN || "goose";
@@ -196,7 +198,9 @@ async function main(): Promise<void> {
     cwd,
     mcpServers: [],
     _meta: {
-      goose: { client: "cgoose", sessionTitle: "acp-probe" },
+      // goose reads session fields at the TOP level of `_meta`; a nested
+      // `_meta.goose` is only understood for initialize capabilities.
+      ...newSessionMeta({ sessionTitle: "acp-probe" }),
     },
   }));
   sessionId = newSession.sessionId;

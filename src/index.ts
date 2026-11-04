@@ -1191,6 +1191,15 @@ async function main() {
             model: modelValue,
             isNew: isNewSession,
             resumeSessionId: isNewSession ? undefined : sessionName,
+            // `session/load` keeps the provider/model stored in the session row,
+            // so the chat needs them to tell "unchanged" from "switched" and
+            // apply the wizard's choice through `session/set_config_option`.
+            resumeConfig: sessionObj
+              ? {
+                  provider: sessionObj.provider_name,
+                  model: sessionObj.model_config?.model_name ?? null,
+                }
+              : undefined,
             sessionDisplayName: resolvedSessionName,
             sessionSet: selectedSet,
           });

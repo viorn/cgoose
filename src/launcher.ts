@@ -294,6 +294,12 @@ export interface AcpLaunchOptions {
   isNew: boolean;
   /** On resume: the goose session id (from sessions.db) to load. */
   resumeSessionId?: string;
+  /**
+   * On resume: provider/model currently stored in the session row, so the chat
+   * can tell an unchanged choice from a real switch (`session/load` keeps the
+   * stored pair, `session/set_config_option` changes it).
+   */
+  resumeConfig?: { provider?: string | null; model?: string | null };
   sessionDisplayName?: string;
   sessionSet?: string;
 }
@@ -364,6 +370,7 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
     sessionTitle: opts.sessionName || undefined,
     provider: opts.providerInfo.name,
     model: opts.model,
+    resumeConfig: opts.resumeConfig,
     set,
     useDefaultProfile: prepared.useDefaultProfile,
     agentBuiltins,

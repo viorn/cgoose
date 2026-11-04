@@ -102,7 +102,9 @@ warns in the TUI and keeps the ACP default.
   base mode (`mc`→`m`, `ac`/`ca`→`a`, `nc`/`cn`→`n`, `sc`/`cs`→`s`, `wc`→`w`)
 - Implementation: `src/acp/` — `client.ts` (transport), `custom.ts` (goose custom
   requests, methods `_goose/unstable/...`), `extensions.ts` (spec → ACP `mcpServers`,
-  pure and unit-tested), `chat.ts` (pi-tui based chat UI)
+  pure and unit-tested), `session-meta.ts` (`session/new` `_meta`, pure and unit-tested),
+  `session-config.ts` (provider/model via `session/set_config_option`, pure planning +
+  non-throwing apply, unit-tested), `chat.ts` (pi-tui based chat UI)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
 - Rendering: the chat owns the **alternate screen** — `TuiAltScreen` with an explicit
@@ -168,13 +170,40 @@ warns in the TUI and keeps the ACP default.
     that long → `session/cancel`; a long but *live* turn is never interrupted
   - `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 4 h) — absolute cap on a single turn; on
     timeout the client also sends `session/cancel` and the UI reports the error
-- Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.provider` (top level — goose reads session fields there, only initialize capabilities live under `_meta.goose`); `_meta.sessionTitle` + `_meta.client` name the session and make it a normal `user` session
+- `session/new` `_meta` is built by `newSessionMeta()` (`src/acp/session-meta.ts`) and stays FLAT:
+  goose reads session fields at the top level (`_meta.goose` is only for initialize
+  capabilities), so a nested `client` used to leave the session `Acp` — invisible to
+  `goose session list` and to the wizard — and a nested `sessionTitle` left it "New Chat"
+- Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env, with the wizard's
+  pair then pinned through ACP: `_meta.provider` is deliberately not sent, because goose
+  resolves the model from the provider registry's default and ignores `GOOSE_MODEL` — the
+  wizard's model choice was silently replaced (live 1.57: `custom_kodik` +
+  `GOOSE_MODEL=qwen/qwen3.6-flash` → `deepseek/deepseek-v4-flash`); `session/load` then
+  ignores the env entirely and keeps the pair stored in the session row, so the model would
+  also be lost on resume. Both cases go through `session/set_config_option`
+  (`src/acp/session-config.ts`, the SACP request goose's own ACP client uses): a pure
+  `planSessionConfig()` sends **provider first, then model** (switching the provider resets
+  the model to that provider's default — live: `custom_openintegration` →
+  `deepseek/deepseek-v4-flash`), skips an unchanged pair, and `applySessionConfig()` never
+  throws — an unsupported `configId` (`Unsupported config option: …` on an older goose)
+  becomes a chat warning, and a silent mismatch between the request and the agent's reported
+  `configOptions` is reported too. `value` must be a bare string: an object fails goose's
+  `untagged enum SessionConfigOptionValue` deserialization. `configOptions` come from the
+  `session/new` response (new sessions) and from `sessions.db`'s `provider_name` +
+  `model_config_json` (resume, passed as `resumeConfig`) rather than
+  `_goose/unstable/session/info`, which does not exist on goose 1.50
+- `_meta.sessionTitle` + `_meta.client` name the session and make it a normal `user` session
+  (`session_type = 'user'`); ACP sessions created before this are still listed, just badged
+  `[acp]` — listing reads `sessions.db` directly (`src/sessions.ts`, types `user`/`scheduled`/`acp`),
+  because `goose session list` reports only `user` + `scheduled`; resume uses `--session-id`,
+  which has no `session_type` filter (`--name` resolves through `list_sessions()` and failed on ACP ids)
 - Requires a goose with the `acp` subcommand (1.50.0 and 1.57.0 verified; `_goose/unstable/*` methods degrade
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
-- Verification scripts: `bun run test` (unit tests for `extensions.ts`, no goose needed),
-  `bun scripts/acp-probe.ts` (raw protocol) and `bun scripts/acp-client-smoke.ts`
-  (`src/acp/client.ts` without the TUI; checks the `enabledExtensions` and `mcpServers` channels)
+- Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
+  `session-config.ts` and the db-backed session listing — no goose needed), `bun scripts/acp-probe.ts`
+  (raw protocol) and `bun scripts/acp-client-smoke.ts` (`src/acp/client.ts` without the TUI; checks the
+  `enabledExtensions` and `mcpServers` channels)
 
 ## Data Paths
 

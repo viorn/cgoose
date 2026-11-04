@@ -11,6 +11,8 @@ import {
   listSessionExtensions,
   setSessionSystemPrompt,
 } from "../src/acp/custom";
+import { newSessionMeta } from "../src/acp/session-meta";
+import { applySessionConfig, optionValue } from "../src/acp/session-config";
 
 async function main(): Promise<void> {
   const client = AcpClient.spawn({ env: { RUST_LOG: "error" } });
@@ -48,9 +50,31 @@ async function main(): Promise<void> {
   const session = await client.newSession({
     cwd: process.cwd(),
     mcpServers: [],
-    _meta: { goose: { client: "cgoose", sessionTitle: "acp-client-smoke" } },
+    // Flat `_meta` — goose reads `client`/`sessionTitle` at the top level.
+    _meta: newSessionMeta({ sessionTitle: "acp-client-smoke" }),
   });
   console.log("\nsession:", session.sessionId);
+
+  // The provider/model channel: `session/new` resolves the pair from
+  // GOOSE_PROVIDER/GOOSE_MODEL, but `session/load` keeps the session row's pair.
+  // This request works for both (see src/acp/session-config.ts).
+  if (session.configOptions) {
+    const configured = await applySessionConfig(
+      client,
+      session.sessionId,
+      { provider: process.env.GOOSE_PROVIDER, model: process.env.GOOSE_MODEL },
+      {
+        provider: optionValue(session.configOptions, "provider"),
+        model: optionValue(session.configOptions, "model"),
+      },
+    );
+    console.log(
+      "provider/model:",
+      `${configured.provider}/${configured.model}`,
+      configured.applied.length > 0 ? `(set: ${configured.applied.map((s) => s.configId).join("+")})` : "(unchanged)",
+      configured.warning ? `⚠ ${configured.warning}` : "",
+    );
+  }
 
   await setSessionSystemPrompt(client, session.sessionId, {
     mode: "set",
@@ -82,11 +106,8 @@ async function main(): Promise<void> {
     cwd: process.cwd(),
     mcpServers: [],
     _meta: {
-      goose: {
-        client: "cgoose",
-        sessionTitle: "acp-client-smoke-ext",
-        enabledExtensions: [],
-      },
+      ...newSessionMeta({ sessionTitle: "acp-client-smoke-ext" }),
+      enabledExtensions: [],
     },
   });
   const constrainedExts = await listSessionExtensions(client, constrained.sessionId);
