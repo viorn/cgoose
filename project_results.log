@@ -1,19 +1,24 @@
-# project_results.log — rossii, состояние на 2026-11-04 20:55 MSK
+# project_results.log — rossii, состояние на 2026-11-04 23:10 MSK
 
-Репозиторий : /home/viorn/sources/cgoose (локальный каталог сохранил старое имя)
+Репозиторий : /home/vyuyukin/Data/my/sources/cgoose (локальный каталог сохранил старое имя)
 Ветка       : main
-HEAD        : d4e82fe  rename: cgoose → rossii — Anser rossii, the smallest goose
+HEAD        : aa2f8c5  release: 3.1.0
 Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoose, редирект работает)
-Релиз       : v3.0.0 — опубликован как latest (не pre-release), asset rossii-3.0.0-linux-x86_64
-              sha256 ac0feda18a269f0e…, в заметках — команда установки
-              https://github.com/viorn/rossii/releases/tag/v3.0.0
-              Установлено на машину именно из релизного ассета (curl + install), не из build.sh
-Версия      : 3.0.0 (package.json)
-Установлено : ~/.local/bin/rossii ← rossii-3.0.0-linux-x86_64
-              sha256 ac0feda18a269f0e… (сборка 2026-11-04 20:53 MSK)
-              ~/.local/bin/cgoose — симлинк на rossii (старая привычка работает)
-Конфиг      : ~/.config/cgoose → ~/.config/rossii (перемещён; сеты и projects на месте)
-Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun
+Релиз       : v3.1.0 — опубликован как latest (не pre-release), assets
+              rossii-3.1.0-linux-x86_64 (83 371 208 Б) + rossii-3.1.0-linux-x86_64.sha256
+              sha256 fefd2d708da5766ccdeabbd4ed62805ca11d105e88646a2c0b82638a5f7721b8
+              https://github.com/viorn/rossii/releases/tag/v3.1.0
+              Предыдущий: v3.0.0 (rossii-3.0.0-linux-x86_64, sha256 ac0feda18a269f0e…)
+Версия      : 3.1.0 (package.json)
+Установлено : ~/.local/bin/rossii ← rossii-3.1.0-linux-x86_64, поставлено однострочником
+              install-release.sh (curl | sh), sha256 совпал с релизным ассетом
+              ~/.local/bin/cgoose — удалён, старый симлинк больше не нужен
+Конфиг      : ~/.config/rossii (перенос из ~/.config/cgoose сделан; fallback-чтение
+              старого каталога в коде осталось — для чужих машин)
+Бинарь 3.1.0: 83 371 208 Б против 64 713 568 Б у 3.0.0. Это не код: дерево v3.0.0,
+              собранное локальным bun 1.4.0, даёт те же 83 371 208 Б — так
+              компилирует рантайм, ассет 3.0.0 собран другой версией bun
+Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun 1.4.0
 
 ## Коммиты этих циклов
 
@@ -22,6 +27,39 @@ Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoos
 | f808cba | docs: project_results.log — состояние 2.4.0 |
 | a6ecd49 | chat: живая конфигурация, fetch моделей, диалоги в рамках, /edit — the ACP TUI (релиз 2.4.0) |
 | d4e82fe | rename: cgoose → rossii (релиз 3.0.0) |
+| 1d8eff3 | install: однострочная установка последнего релиза (install-release.sh) |
+| 5a605d3 | docs: демо-гиф чата — диалог конфигурации, смена модели, ответ |
+| 7695f7e | chat: текущий сет в статус-строке |
+| 73272f8 | chat: фильтр во всех меню, а не только в fetch-списке моделей |
+| aa2f8c5 | release: 3.1.0 (package.json, `<asset>.sha256` в build.sh) |
+
+## Что появилось (3.1.0)
+
+- **Фильтр во всех меню чата.** Строку поиска включал флаг `searchable` у
+  `showMenu`, и стоял он только у «🔄 Fetch models from API» — поэтому в меню Set
+  (пять пунктов) ввод ничего не делал, а Enter выбирал то, что подсвечено. Флага
+  больше нет: `showMenu` всегда строит `SearchableList`, то есть фильтр есть в
+  `/config`, Provider, Model, Set, Session и в любом будущем меню. Совпадение по
+  **подстроке** (`flash` → `deepseek-v4-flash`, `god` → Godot), Backspace
+  возвращает список, стрелки/Enter/Esc работают как раньше (Esc закрывает меню, а
+  не чат). Меню Model и Session получили широкую рамку fetch-списка (88 колонок,
+  52 под id).
+- **Текущий сет в статус-строке**:
+  `custom_openintegration/deepseek/deepseek-v4-flash  set: Godot  tokens 0/256000`
+  — перерисовывается при `/set`, смене сессии, форке и новой сессии.
+- **`install-release.sh`** — однострочник `curl -fsSL …/install-release.sh | sh`:
+  находит последний релиз, качает ассет под платформу, проверяет sha256
+  (опубликованный `<asset>.sha256`, иначе digest из GitHub API) и ставит в
+  `~/.local/bin/rossii`. Только curl или wget, без Bun и jq; ключи `--version`,
+  `--dir`, `--no-checksum`; для тегов до 3.0.0 подхватывает старое имя ассета
+  `cgoose-…`. Релизы теперь кладут рядом и `<asset>.sha256` (его пишет `build.sh`).
+- **Демо в README** — `chat.gif` (1.1 МБ): диалог `/config`, список моделей с
+  лимитами контекста и ответ на промпт.
+
+Проверки 3.1.0: `bun run check`, `bun run test` (84 проверки), живой чат в tmux
+(нулевые токены: фильтр в каждом меню, применение сета, строка статуса) и
+однострочник против v3.1.0, v3.0.0 и legacy-тега v2.4.0 — обычный путь, `--dir`,
+`--version`, только wget и пути ошибок (несуществующий тег, `ROSSII_OS=darwin`).
 
 ## Переименование 3.0.0 (cgoose → rossii)
 
