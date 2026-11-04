@@ -1,0 +1,94 @@
+# project_results.log — cgoose, состояние на 2026-11-04 16:40 MSK
+
+Репозиторий : /home/viorn/sources/cgoose
+Ветка       : main
+HEAD        : e9d5e42  docs+skill: live-verified session sets on resume; tmux TUI testing skill
+Remote      : origin/main = e9d5e42 (синхронизировано, рабочее дерево чистое)
+Версия      : 2.2.1 (package.json)
+Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun
+
+## Коммиты этого цикла
+
+| Коммит  | Что |
+|---------|-----|
+| 5983040 | chat: applying Default to a resumed session actually loads the profile (фикс + 27 unit-проверок) |
+| 687ec6a | docs: scheduler is hidden from the ACP config extension list, not gone |
+| d8b84a4 | chat: the wizard's model survives new sessions and resume (ACP) — пришёл с origin, ребейз прошёл чисто |
+| e9d5e42 | docs+skill: plans/sets-resume-verification.md, .goose/skills/tmux-test-skill, task_log.txt |
+
+## Что проверено живьём (TUI в tmux, без отправки промптов — 0 токенов)
+
+Контроль — `sessions.extension_data` в `~/.local/share/goose/sessions/sessions.db`.
+
+| Сценарий | Результат |
+|---|---|
+| Новая сессия, сет `Test Set` (developer, analyze, summon) | ровно эти три builtin |
+| Новая сессия, сет `probe-mcp` (developer + stdio MCP) | `builtin:developer` + `stdio:echo-mcp`; инструмент `logmcp__echo` в `tools/list` |
+| Resume `Test Set` → `Code Review` | `removed summon` → остались `analyze, developer` |
+| Resume с `None` | удалено всё, `developer` оставлен |
+| Resume с `Default` | профиль из config.yaml: 9 расширений, включая `scheduler` |
+| Resume с MCP-сетом обратно | `added echo-mcp`, сервер поднялся |
+| Мастер создания сета | `wiz2.yaml` (name/title/builtins/systemPrompt); сессия стартует ровно с двумя builtin |
+| Смоук-прогон скилла (2026-11-04 16:35) | TUI поднялся, «None» → сессия `cgoose-check-2026-11-04-16-35` с `[]`, БД/проект/временный каталог вычищены |
+
+Сообщения в транскрипте: `set applied to the resumed session: added …` /
+`removed …` / `default profile applied to the resumed session: added …`.
+
+## Скилл для тестирования через tmux
+
+- Путь: `.goose/skills/tmux-test-skill/` (project-scoped; `goose skills list`
+  показывает Location `/home/viorn/sources/cgoose/.goose/skills/tmux-test-skill`)
+- `SKILL.md` — карта мастера (6 шагов), правила паузы (ждать текст, а не время;
+  текст и Enter отдельными вызовами), проверка через sqlite3, чек-лист чистки,
+  предостережения (не трогать сессии пользователя, не слать промпты).
+- `scripts/tmux-drive.py` — обвязка start/wait/send/type/capture/kill.
+- `scripts/mcp-echo.py` — минимальный stdio MCP-сервер, отвечает на
+  `server/discover` (draft 2026-07-28) и `initialize`; нужен для stdio-расширений
+  в сете.
+- Имя с дефисом, т.к. `validate_skill_name` в goose допускает только lowercase,
+  цифры и `-`.
+
+Быстрый запуск:
+
+```bash
+SKILL=.goose/skills/tmux-test-skill
+python3 $SKILL/scripts/tmux-drive.py start --name t --cwd /tmp/probe \
+  --cmd 'CGOOSE_NO_WORKTREE=1 bun /home/viorn/sources/cgoose/src/index.ts'
+python3 $SKILL/scripts/tmux-drive.py wait --name t --pattern 'Session set' --timeout 40
+python3 $SKILL/scripts/tmux-drive.py capture --name t --lines 12
+python3 $SKILL/scripts/tmux-drive.py kill --name t
+```
+
+## Особенности goose 1.57 (для будущих правок)
+
+- MCP: обязательный `server/discover` до `initialize`; сервер без него не
+  грузится. На новой сессии упавший MCP молчит, на resume `extensions/add`
+  сообщает `process quit before initialization: stderr = …`.
+- `config/extensions/list` скрывает hidden-расширения (`scheduler`,
+  `orchestrator`) → профиль для Default читается из config.yaml
+  (`listGooseExtensions()`), а ACP-методы применяют его к сессии.
+- `session/extensions/list` → `GooseExtension[]` без ключей и `enabled`:
+  сравнение по имени, удаление по ключу.
+- `remove`: 1.50/1.57 ждут `extensionKey`, main/2.0-rc — `name` (клиент пробует
+  оба).
+- `extensions/add` со stdio: `env` обязателен, но допускается только пустой
+  (`env: []`); значения — лишь через `envKeys` из секретов goose.
+- Битый YAML сета молча выпадает из списка (`listSessionSets` глотает ошибку
+  парсера).
+
+## Проверки
+
+```bash
+cd /home/viorn/sources/cgoose
+bun run check   # tsc — чисто
+bun run test    # 23 проверки расширений + offline ACP клиент
+```
+
+## Открытые ограничения
+
+- inline env (`K=V`) в stdio-спеке нельзя выразить через `enabledExtensions`;
+- classic-режим на resume набор расширений не меняет;
+- битые YAML-сеты выпадают молча (кандидат на предупреждение при старте).
+
+Подробный отчёт: `task_log.txt`, `plans/sets-resume-verification.md`,
+`plans/acp-set-exactness.md`.
