@@ -135,7 +135,10 @@ warns in the TUI and keeps the ACP default.
   - **Default on resume** is reconciled too: `planProfileExtensions(listGooseExtensions())`
     rebuilds the profile from config.yaml (goose has no "reset to profile" request), so a
     session created with None actually gains the profile extensions; a profile entry ACP
-    cannot express (inline env) is left untouched and reported
+    cannot express (inline env) is left untouched and reported. config.yaml (not
+    `_goose/unstable/config/extensions/list`) is the source: goose filters HIDDEN platform
+    extensions out of that RPC (`is_hidden_extension`) — in 1.57 those are `scheduler` and
+    `orchestrator`, so the RPC would silently drop the scheduler on every Default switch
   - after creating a session the chat reads the real extension list and warns only if profile
     extensions leaked in (a goose that ignores the field) or expected ones are missing
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`

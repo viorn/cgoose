@@ -269,6 +269,12 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // "reset to profile" request. So the profile is rebuilt from config.yaml and
   // reconciled like an exact set — that is what makes switching a session to
   // Default actually bring the extensions back.
+  //
+  // The profile comes from config.yaml, not from
+  // `_goose/unstable/config/extensions/list`: goose filters HIDDEN platform
+  // extensions out of that listing (`is_hidden_extension`), and in 1.57 the
+  // hidden ones are `scheduler` and `orchestrator`. Building Default from the
+  // RPC would silently drop the scheduler on every switch.
   const profilePlan = opts.useDefaultProfile ? planProfileExtensions(listGooseExtensions()) : null;
 
   /** The extension list this session must end up with. */
