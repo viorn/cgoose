@@ -36,10 +36,14 @@ import {
   Loader,
   Markdown,
   ProcessTerminal,
+  ScrollView,
   SelectList,
   Spacer,
   Text,
+  TuiAltScreen,
   TuiMainScreen,
+  VStack,
+  isViewportTUI,
   matchesKey,
   type TUI,
 } from "@earendil-works/pi-tui";
@@ -168,7 +172,17 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   });
 
   const terminal = new ProcessTerminal();
-  const tui: TUI = new TuiMainScreen(terminal);
+  // Chat renders into its own viewport (alternate screen): the transcript
+  // scrolls *inside* the TUI — wheel, PgUp/PgDn, Ctrl+Shift+F search — and
+  // streaming updates never drag the view back to the bottom. The header and
+  // the composer stay pinned. On exit pi-tui prints the final transcript to
+  // the normal screen, so the conversation still lands in the scrollback.
+  //
+  // CGOOSE_CHAT_MAIN_SCREEN=1 restores the inline renderer, where the terminal
+  // owns the scrollback: any repaint writes at the cursor and pulls the view
+  // down, so reading history during a turn is best-effort there.
+  const altScreen = process.env.CGOOSE_CHAT_MAIN_SCREEN !== "1";
+  const tui: TUI = altScreen ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
 
   const transcript = new Container();
   const statusLine = new Text("", 0, 0);
@@ -475,27 +489,17 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   // ─── UI ───────────────────────────────────────────────────────────────────
 
-  tui.addChild(headerLine);
   const setLabel = opts.set?.title ?? (opts.useDefaultProfile ? "Default (goose config.yaml)" : undefined);
-  if (setLabel !== undefined) {
-    tui.addChild(new Text(pc.dim(`set: ${setLabel}`), 1, 0));
-  }
-  tui.addChild(new Spacer());
-  tui.addChild(transcript);
 
-  // The Loader re-renders every 80 ms to animate the spinner. In a main-screen
-  // TUI each render writes at the cursor (the last line), which makes the
-  // terminal jump back to the bottom — so while the agent is thinking in
-  // silence the user cannot scroll up through the history. Give it a no-op UI:
-  // ticks only advance the frame text, painting happens on the next *real*
-  // render (streamed chunks, tool calls), and an idle turn writes nothing.
+  // In the inline renderer every repaint writes at the cursor (the last line)
+  // and drags the terminal back to the bottom, so there the spinner must not
+  // request renders: its ticks only advance the frame text and the next real
+  // update paints it. With a viewport of our own the animation is harmless.
   const inertUi = { requestRender: () => {} } as unknown as TUI;
-  const loader = new Loader(inertUi, (s) => pc.cyan(s), (s) => pc.dim(s), "thinking…");
+  const loader = new Loader(altScreen ? tui : inertUi, (s) => pc.cyan(s), (s) => pc.dim(s), "thinking…");
   // The constructor starts the animation; keep it idle until a turn runs.
   loader.stop();
   loader.setText("");
-  tui.addChild(loader);
-  tui.addChild(new Spacer());
 
   const setLoader = (message: string | null): void => {
     if (message === null) {
@@ -506,13 +510,46 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
     loader.setMessage(message);
     loader.start();
-    // The loader no longer requests renders itself (see inertUi above).
     tui.requestRender();
   };
 
   const editor = new Editor(tui, editorTheme, { paddingX: 1 });
-  tui.addChild(editor);
-  tui.addChild(statusLine);
+
+  if (isViewportTUI(tui)) {
+    // Header pinned on top, composer pinned at the bottom, transcript scrolls
+    // in between with `follow: "end"` (auto-follow stops as soon as the user
+    // scrolls up and resumes at the bottom).
+    const header = new VStack([
+      headerLine,
+      ...(setLabel !== undefined ? [new Text(pc.dim(`set: ${setLabel}`), 1, 0)] : []),
+    ]);
+    const composer = new VStack([loader, new Spacer(), editor, statusLine]);
+    tui.setLayoutRoot(new VStack([
+      { component: header, basis: "auto", shrink: 0 },
+      {
+        component: new ScrollView(transcript, {
+          follow: "end",
+          primary: true,
+          overscroll: "chain",
+        }),
+        basis: 0,
+        grow: 1,
+        minSize: 1,
+      },
+      { component: composer, basis: "auto", shrink: 1, minSize: 2 },
+    ]));
+  } else {
+    tui.addChild(headerLine);
+    if (setLabel !== undefined) {
+      tui.addChild(new Text(pc.dim(`set: ${setLabel}`), 1, 0));
+    }
+    tui.addChild(new Spacer());
+    tui.addChild(transcript);
+    tui.addChild(loader);
+    tui.addChild(new Spacer());
+    tui.addChild(editor);
+    tui.addChild(statusLine);
+  }
   editor.onSubmit = (value: string) => {
     const text = value.trim();
     if (!text || busy) return;
@@ -662,6 +699,15 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       await client.stop();
     } finally {
       tui.stop();
+      // On the alternate screen tui.stop() prints the final transcript back to
+      // the normal screen; give stdout a moment to drain before exiting so the
+      // tail of it is not truncated.
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        try { process.stdout.write("", done); } catch { done(); }
+        const timer = setTimeout(done, 500);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      });
       process.exit(0);
     }
   }

@@ -101,6 +101,13 @@ JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/p
   pure and unit-tested), `chat.ts` (pi-tui based chat UI)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
+- Rendering: the chat owns the **alternate screen** — `TuiAltScreen` with an explicit
+  layout root (header pinned, `ScrollView(transcript, { follow: "end", primary: true })`
+  in the middle, composer pinned). Scroll position survives streaming: follow-end turns
+  off when the user scrolls up and resumes at the bottom. `tui.stop()` prints the final
+  transcript back to the normal screen, so scrollback keeps the conversation.
+  `CGOOSE_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
+  scrollback, so any repaint — spinner, streamed chunk — pulls the view to the bottom)
 - Session sets in chat mode (channels verified on goose 1.57 via `acp-client-smoke`):
   - builtins → `goose acp --with-builtin <names>` on the agent command line
   - stdio/streamable-http extensions → standard ACP `mcpServers` on `session/new`
