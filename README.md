@@ -157,7 +157,9 @@ nothing is sent, the draft stays. The chat takes the alternate screen back after
 
 Everything a command does is also reachable from the menus, and a set change, session switch or
 fork is refused while a turn is running (provider/model switches are allowed and apply to the next
-turn). Model and session menus long enough to be unwieldy get a filter line and match by substring.
+turn). Every menu — provider, model, set, session, `/config` itself — carries a filter line: type to
+narrow the list by **substring** (`flash` finds `deepseek-v4-flash`), Backspace widens it again, and
+the arrows, Enter and Esc keep behaving exactly as before.
 
 ### Changing things live
 

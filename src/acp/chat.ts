@@ -30,7 +30,7 @@
  * is re-applied (or explicitly cleared when no set).
  *
  * Live configuration (no restart needed, all through slash commands and the
- * `/config` SelectList menus):
+ * `/config` menus — every one of them a searchable SelectList):
  *   /provider · /model → `session/set_config_option` (provider first, then model)
  *   /set               → system prompt + extension reconciliation in place
  *   /session           → switch (session/load), new, rename, fork
@@ -810,21 +810,21 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     title: string,
     items: Array<{ value: string; label: string; description?: string }>,
     onSelect: (value: string) => void | Promise<void>,
-    options: { layout?: SelectListLayoutOptions; width?: number; searchable?: boolean } = {},
+    options: { layout?: SelectListLayoutOptions; width?: number } = {},
   ): void => {
     if (activePermission || menuActive) return; // don't stack overlays
     menuActive = true;
     const entries = items.length > 0 ? items : [{ value: "cancel", label: "Cancel" }];
-    // Long lists (a provider can report 700+ models) need a filter; short ones
-    // are quicker with the plain list.
-    const list: SelectList | SearchableList = options.searchable
-      ? new SearchableList(entries, selectListTheme, {
-          maxVisible: 10,
-          layout: options.layout,
-          placeholder: "type to filter",
-          searchStyle: pc.dim,
-        })
-      : new SelectList(entries, 10, selectListTheme, options.layout);
+    // Every menu is searchable: typing narrows the list (substring match, so
+    // `flash` finds `deepseek-v4-flash`) while arrows, Enter and Esc keep
+    // behaving exactly as in a plain SelectList. Provider names, model ids, set
+    // titles and session names are all lists one filters rather than scans.
+    const list: SearchableList = new SearchableList(entries, selectListTheme, {
+      maxVisible: 10,
+      layout: options.layout,
+      placeholder: "type to filter",
+      searchStyle: pc.dim,
+    });
     let finished = false;
     const finish = (): void => {
       if (finished) return;
@@ -1285,6 +1285,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         return;
       }
       transcript.addChild(new Text(pc.dim(`Found ${models.length} model(s) at ${provider.name}.`), 1, 0));
+      // Model ids are long (`~anthropic/claude-sonnet-latest`) and the context
+      // limit needs its own room, so the list is wider than the other menus.
       showMenu(`Models from ${provider.name}`, models.map((model) => ({
         value: model.id,
         label: model.id,
@@ -1294,10 +1296,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       })), (value) => {
         const picked = models.find((model) => model.id === value);
         if (picked) void applyFetchedModel(picked, provider);
-      // Model ids are long (`~anthropic/claude-sonnet-latest`) and the context
-      // limit needs its own room, so this menu is wider than the others; it is
-      // also searchable, because the API can return hundreds of models.
-      }, { width: 88, layout: { maxPrimaryColumnWidth: 52 }, searchable: true });
+      }, { width: 88, layout: { maxPrimaryColumnWidth: 52 } });
     } catch (error) {
       transcript.addChild(new Text(
         pc.yellow(`⚠ Failed to fetch models: ${String((error as Error)?.message ?? error)}`),
@@ -1325,10 +1324,12 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       description: currentProvider,
     });
     items.push({ value: "cancel", label: "Cancel" });
+    // The same room for the ids as the fetched list: the names goose reports are
+    // just as long, and typing filters them down the same way.
     showMenu("Select Model", items, (value) => {
       if (value === "!fetch") void fetchModelsForCurrentProvider();
       else if (value !== "cancel") void changeModel(value);
-    });
+    }, { width: 88, layout: { maxPrimaryColumnWidth: 52 } });
   };
 
   const showSetMenu = (): void => {
@@ -1362,6 +1363,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     );
     items.push({ value: "new", label: "＋ New Session" });
     items.push({ value: "cancel", label: "Cancel" });
+    // Free-form titles, usually longer than the default 32-column primary
+    // column — the filter makes a long list usable either way.
     showMenu("Select Session", items, (value) => {
       if (value === "new") {
         void newSession();
@@ -1372,7 +1375,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       } else if (value !== "cancel") {
         void changeSession(value);
       }
-    });
+    }, { width: 88, layout: { maxPrimaryColumnWidth: 52 } });
   };
 
   const handleCommand = async (text: string): Promise<void> => {
