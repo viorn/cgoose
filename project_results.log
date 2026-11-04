@@ -1,24 +1,57 @@
-# project_results.log — cgoose, состояние на 2026-11-04 20:05 MSK
+# project_results.log — rossii, состояние на 2026-11-04 20:55 MSK
 
-Репозиторий : /home/viorn/sources/cgoose
+Репозиторий : /home/viorn/sources/cgoose (локальный каталог сохранил старое имя)
 Ветка       : main
-HEAD        : a6ecd49  chat: live configuration, model fetch, framed dialogs, /edit — the ACP TUI
-Remote      : origin/main = a6ecd49 (синхронизировано)
-Релиз       : v2.4.0 (тег запушен, pre-release, asset cgoose-2.4.0-linux-x86_64)
-              https://github.com/viorn/cgoose/releases/tag/v2.4.0
-Версия      : 2.4.0 (package.json)
-Установлено : ~/.local/bin/cgoose ← cgoose-2.4.0-linux-x86_64
-              sha256 19e1ab3f33b30d69… (сборка 2026-11-04 20:02 MSK)
+HEAD        : d4e82fe  rename: cgoose → rossii — Anser rossii, the smallest goose
+Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoose, редирект работает)
+Релиз       : v3.0.0 (тег запушен, pre-release, asset rossii-3.0.0-linux-x86_64)
+              https://github.com/viorn/rossii/releases/tag/v3.0.0
+Версия      : 3.0.0 (package.json)
+Установлено : ~/.local/bin/rossii ← rossii-3.0.0-linux-x86_64
+              sha256 ac0feda18a269f0e… (сборка 2026-11-04 20:53 MSK)
+              ~/.local/bin/cgoose — симлинк на rossii (старая привычка работает)
+Конфиг      : ~/.config/cgoose → ~/.config/rossii (перемещён; сеты и projects на месте)
 Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun
 
-## Коммиты этого цикла
+## Коммиты этих циклов
 
 | Коммит  | Что |
 |---------|-----|
-| a6ecd49 | chat: live configuration, model fetch, framed dialogs, /edit — the ACP TUI |
+| f808cba | docs: project_results.log — состояние 2.4.0 |
+| a6ecd49 | chat: живая конфигурация, fetch моделей, диалоги в рамках, /edit — the ACP TUI (релиз 2.4.0) |
+| d4e82fe | rename: cgoose → rossii (релиз 3.0.0) |
 
-Один коммит, потому что всё это связано: смена сета/сессии/провайдера/модели
-живьём, новые диалоги, /edit, переписанный README и релиз 2.4.0.
+## Переименование 3.0.0 (cgoose → rossii)
+
+`Anser rossii` — гусь Росса, самый мелкий гусь; старое имя (goose с «c») перестало
+что-либо описывать, когда чат стал самим продуктом.
+
+| Что | Было | Стало |
+|---|---|---|
+| репозиторий | `viorn/cgoose` | `viorn/rossii` (редирект со старого URL) |
+| пакет / версия | `cgoose` 2.4.0 | `rossii` 3.0.0 |
+| бинарь, install.sh | `cgoose`, `~/.local/lib/cgoose` | `rossii`, `~/.local/lib/rossii` |
+| исходник конфига | `src/cgoose-config.ts` | `src/rossii-config.ts` |
+| переменные окружения | `CGOOSE_*` (13 штук) | `ROSSII_*` |
+| каталог настроек | `~/.config/cgoose` | `~/.config/rossii` |
+| ключ системного промпта | `cgoose` | `rossii` |
+| шапка чата / баннер | `🪿 cgoose chat` | `🪿 rossii chat` |
+
+Обратная совместимость сделана намеренно, чтобы переименование не меняло
+поведение молча:
+
+- `env()` / `hasEnv()` / `setEnv()` в `src/utils.ts` читают `ROSSII_*` и падают на
+  `CGOOSE_*`; через них идут все 13 настроек, поэтому старый export в профиле не
+  «теряется» (иначе вотчдог тихо выключился бы);
+- `resolveConfigDir()` берёт старый `~/.config/cgoose`, пока нет
+  `~/.config/rossii` (та же логика для `projects`), а `ROSSII_CONFIG_DIR` /
+  `ROSSII_PROJECTS_DIR` переопределяют всё;
+- `applySystemPrompt()` ставит промпт под новый ключ `rossii` и **чистит** старый
+  `cgoose`: goose хранит `system_prompt_extras` по имени клиента, иначе резюм
+  получил бы два промпта сразу.
+
+История осталась историей: `docs/legacy-classic{,.ru}.md`, `plans/*`,
+`task_log.txt` сохранили старое имя и получили ссылку на новое.
 
 ## Что появилось (2.4.0)
 
@@ -61,7 +94,7 @@ Remote      : origin/main = a6ecd49 (синхронизировано)
 
 ### Прочее
 
-- `cgoose a` / `cgoose n` в chat-режиме открывают чат сразу, без подтверждения
+- `rossii a` / `rossii n` в chat-режиме открывают чат сразу, без подтверждения
   (`quickLaunch` в `src/index.ts`); classic-режим подтверждение оставляет.
 - README переписан под эпоху ACP (EN + RU), до-ACP описание убрано в
   `docs/legacy-classic{,.ru}.md`. Старые gif-демки (`flow.gif`) сохранены.
@@ -83,12 +116,21 @@ Remote      : origin/main = a6ecd49 (синхронизировано)
 | `/fork` | `session/fork` возвращает новый id (`scripts/acp-fork-probe.ts`) |
 | `/rename` | заголовок меняется и в шапке, и в `sessions.db` |
 | `/edit` с фейковым редактором | код 1 → предупреждение, ничего не отправлено; сохранение → промпт ушёл, ответ `Pong!`, `$0.0001` |
-| `cgoose a` (chat) | чат открылся сразу, без шага подтверждения |
+| `rossii a` (chat) | чат открылся сразу, без шага подтверждения |
 | Esc при открытом меню | закрывает меню, приложение живо; Ctrl+C выходит всегда |
-| `bun run test` | 12 проверок overlay + расширения, session-meta, session-config, sessions-list, offline client |
+| `bun run test` | 84 проверки: overlay, расширения, session-meta, session-config, sessions-list, timeouts, offline client |
+| после переименования | чат поднялся через новый лаунчер (шапка `🪿 rossii chat`), сеты читаются из перемещённого `~/.config/rossii`, демо-сессия вычищена из `sessions.db` |
+| фолбэк конфига | при отсутствии `~/.config/rossii` список сетов читается из старого `~/.config/cgoose` (проверено) |
 
 Артефакты тестов убирались каждый раз: сессии из `sessions.db`, файлы
-`~/.config/cgoose/projects/*.json`, тестовые сеты, каталоги в `/tmp`.
+`~/.config/rossii/projects/*.json`, тестовые сеты, каталоги в `/tmp`.
+
+## Локальный каталог
+
+Рабочий каталог остался `/home/viorn/sources/cgoose` — переименование в
+`~/sources/rossii` сделано не было, потому что в нём живёт текущая goose-сессия.
+Ничего в коде на него не завязано (скрипты считают путь от `__file__`/`$PWD`):
+`mv ~/sources/cgoose ~/sources/rossii` в любой момент.
 
 ## Не сделано (осознанно)
 
@@ -98,7 +140,7 @@ Remote      : origin/main = a6ecd49 (синхронизировано)
 - Демо-GIF собирается так: `capture-pane -e` в asciinema v2 `.cast` (полный
   репейнт на кадр) → `agg`. `--text-font-family`, а не `--font-family`, иначе
   agg теряет emoji-фолбэк (шапка начинается с 🪿). Пользовательские сеты на
-  время записи уводятся в `/tmp/cgoose-demo-sets-stash`, чтобы в кадр не попали
+  время записи уводятся в `/tmp/rossii-demo-sets-stash`, чтобы в кадр не попали
   чужие имена.
 
 ## Особенности goose 1.57 (для будущих правок)
@@ -139,7 +181,7 @@ Remote      : origin/main = a6ecd49 (синхронизировано)
 ## Проверки
 
 ```bash
-cd /home/viorn/sources/cgoose
+cd /home/viorn/sources/rossii
 bun run check   # tsc — чисто
 bun run test    # overlay + расширения + session-meta + session-config + sessions-list + offline client
 ```
