@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 /**
- * Offline regression tests for src/acp/client.ts — no goose, no provider.
+ * Offline regression tests for the ACP layer — no goose, no provider.
  *
- * Spawns a tiny fake ACP agent (written to a temp dir) and checks the
- * transport behaviours the chat UI relies on:
+ * Spawns a tiny fake ACP agent (written to a temp dir) and checks:
  *   - initialize / session/load replay ordering
  *   - usage_update cost shape
  *   - prompt timeout sends session/cancel
  *   - requests after stop() reject instead of hanging forever
+ *   - stderr chunks are joined into whole lines
+ *   - an agent that dies outside stop() cannot hang a request
+ *   - chat watchdog timeouts (src/acp/timeouts.ts) honour 0 and warn on junk
  */
 
 import assert from "node:assert/strict";
@@ -15,6 +17,25 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AcpClient } from "../src/acp/client";
+import {
+  DEFAULT_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_TIMEOUT_MS,
+  resolveTimeoutMs,
+} from "../src/acp/timeouts";
+
+assert.deepEqual(resolveTimeoutMs(undefined, 5, "X"), { ms: 5, invalid: null });
+assert.deepEqual(resolveTimeoutMs("   ", 5, "X"), { ms: 5, invalid: null });
+assert.deepEqual(resolveTimeoutMs("1500", 5, "X"), { ms: 1500, invalid: null });
+assert.deepEqual(resolveTimeoutMs("0", 5, "X"), { ms: 0, invalid: null }, "0 disables the guard");
+assert.equal(resolveTimeoutMs("-1", 5, "X").ms, 5, "a negative timeout is rejected");
+const junk = resolveTimeoutMs("5m", 5, "CGOOSE_ACP_IDLE_TIMEOUT_MS");
+assert.equal(junk.ms, 5, "junk falls back to the default");
+assert.match(String(junk.invalid), /CGOOSE_ACP_IDLE_TIMEOUT_MS="5m"/, "junk is reported to the user");
+assert.ok(
+  DEFAULT_IDLE_TIMEOUT_MS > 0 && DEFAULT_TURN_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS,
+  "the idle guard must be the tighter of the two",
+);
+console.log("✅ watchdog timeouts: defaults, 0 disables, junk warns instead of disabling");
 
 const AGENT_SOURCE = String.raw`
 import { createInterface } from "node:readline";
@@ -52,6 +73,16 @@ rl.on("line", (line) => {
     const text = msg.params.prompt?.[0]?.text ?? "";
     pendingPrompt = msg.id;
     if (text === "hang") return;
+    if (text === "stderr-split") {
+      // A stderr line split across two chunks — the client must join them.
+      process.stderr.write("half");
+      setTimeout(() => process.stderr.write("-line" + NL), 30);
+      setTimeout(() => {
+        send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
+        pendingPrompt = null;
+      }, 60);
+      return;
+    }
     notify("session/update", { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", messageId: "m1", content: { type: "text", text: "pong" } } });
     notify("session/update", { sessionId: sid, update: { sessionUpdate: "usage_update", used: 10, size: 100, cost: { amount: 0.0123, currency: "USD" } } });
     if (text === "permission") {
@@ -128,6 +159,13 @@ const permissionResult = await client.prompt("s1", [{ type: "text", text: "permi
 assert.equal(permissionResult.stopReason, "end_turn");
 console.log("✅ agent→client permission request is answered and the turn completes");
 
+// stderr is reassembled per line, not per chunk
+stderr.length = 0;
+await client.prompt("s1", [{ type: "text", text: "stderr-split" }], 5_000);
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.deepEqual(stderr, ["half-line"], "both chunks must arrive as one line");
+console.log("✅ stderr chunks are joined into whole lines");
+
 // A timed-out prompt must reject and cancel the turn at the agent
 await assert.rejects(
   () => client.prompt("s1", [{ type: "text", text: "hang" }], 300),
@@ -142,5 +180,25 @@ await client.stop();
 assert.equal(client.closed, true);
 await assert.rejects(() => client.request("session/new", {}), /transport closed/);
 console.log("✅ closed transport rejects instead of hanging");
+
+// An agent that dies on its own (crash, kill) must settle requests as well:
+// this is the scenario that used to freeze the chat with `busy` forever.
+let resolveDied: () => void = () => {};
+const died = new Promise<void>((resolve) => { resolveDied = resolve; });
+const dying = AcpClient.spawn({ bin, onExit: () => resolveDied() });
+await dying.initialize({ fs: { readTextFile: true } });
+process.kill((dying as unknown as { child: { pid: number } }).child.pid, "SIGKILL");
+await died;
+assert.equal(dying.closed, true, "exitCode/signalCode must mark the transport closed");
+const settled = await Promise.race([
+  dying.request("session/new", { cwd: process.cwd(), mcpServers: [] }).then(
+    () => "resolved",
+    (error: Error) => `rejected: ${error.message}`,
+  ),
+  new Promise((resolve) => setTimeout(() => resolve("hung"), 1_500)),
+]);
+assert.match(String(settled), /^rejected:/, `the request must settle, got: ${settled}`);
+console.log(`✅ agent death outside stop() settles requests (${settled})`);
+await dying.stop();
 
 console.log("\n✅ client offline checks passed");

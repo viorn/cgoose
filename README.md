@@ -168,7 +168,8 @@ The TUI still discovers installed recipes via `goose recipe list --format json`,
 - Streaming assistant text, thinking blocks, tool calls and token/cost usage are rendered by cgoose
 - Session sets: builtins via `goose acp --with-builtin`, stdio/HTTP extensions via ACP `mcpServers`, system prompt via `_goose/unstable/session/system-prompt/set`
 - On goose 1.57 `goose acp` has no `--no-profile`, so the default profile always loads — set extensions are **added** to it (the chat warns about this)
-- Permissions are shown as a SelectList overlay; Esc/Ctrl+C during a turn cancels it, Esc with an empty prompt exits
+- Permissions are shown as a SelectList overlay; Esc/Ctrl+C during a turn cancels it. Esc exits when the prompt is empty (with a draft it arms the exit — press it twice), Ctrl+C always exits
+- Two watchdogs bound a turn: no agent activity for 5 minutes cancels it (`CGOOSE_ACP_IDLE_TIMEOUT_MS`), a single turn is capped at 4 hours (`CGOOSE_ACP_PROMPT_TIMEOUT_MS`)
 - Requires goose ≥ 1.57; otherwise cgoose falls back to the classic `goose session` TUI
 - Verification: `bun run test` (no goose needed), `bun run acp:probe`, `bun run acp:smoke`
 

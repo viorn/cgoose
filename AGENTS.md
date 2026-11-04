@@ -119,13 +119,22 @@ JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/p
   queued (parallel tool calls); Esc/Ctrl+C during a turn sends `session/cancel`, while
   the overlay is open they belong to the list (reject that tool call). Pending requests
   are resolved as `cancelled` on turn end, agent exit and shutdown
+- Esc exits when the prompt is empty; with a non-empty draft it *arms* the exit (a hint
+  is printed, the second Esc exits — the editor itself does not handle Esc); with the
+  autocomplete menu open Esc stays with the editor, which closes the menu. Ctrl+C exits
+  unconditionally
 - If `goose acp` dies, the chat stops accepting prompts and Esc exits; `send()` refuses
   to write to a closed transport, so no request can hang forever
 - `fs/read_text_file` / `fs/write_text_file` are served for any path the agent asks for
-  (no worktree sandbox; write creates parent dirs). ACP clients are trusted — MCP servers
-  effectively get the same access
-- `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 30 min) bounds a single turn; on timeout the
-  client sends `session/cancel` and the UI reports the error
+  (no worktree sandbox; write creates parent dirs). A read honours ACP `line`/`limit` and
+  defaults to 2000 lines (the ACP default), so one huge file cannot flood the context.
+  ACP clients are trusted — MCP servers effectively get the same access
+- Two watchdogs bound a turn (`src/acp/timeouts.ts`); both are disabled by `0`, and a
+  malformed value warns in the chat instead of silently switching the guard off:
+  - `CGOOSE_ACP_IDLE_TIMEOUT_MS` (default 5 min) — no `session/update` from the agent for
+    that long → `session/cancel`; a long but *live* turn is never interrupted
+  - `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 4 h) — absolute cap on a single turn; on
+    timeout the client also sends `session/cancel` and the UI reports the error
 - Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.goose.provider`
 - Requires goose ≥ ~1.57 (`goose acp` + `_goose/unstable/*` methods); `launchGooseAcp`
   checks `goose acp --help` at startup and falls back to the classic TUI otherwise

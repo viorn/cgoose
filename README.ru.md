@@ -168,7 +168,8 @@ TUI по-прежнему находит установленные рецепт
 - Стриминг ответа, thinking-блоки, tool calls и расход токенов/стоимость рендерятся в TUI cgoose
 - Session sets: builtins через `goose acp --with-builtin`, stdio/HTTP-расширения через ACP `mcpServers`, системный промпт через `_goose/unstable/session/system-prompt/set`
 - На goose 1.57 у `goose acp` нет `--no-profile`, поэтому профиль по умолчанию загружается всегда — расширения set'а **добавляются** к нему (в чате выводится предупреждение)
-- Permission-запросы показываются оверлеем SelectList; Esc/Ctrl+C во время хода отменяют его, Esc с пустым вводом выходит
+- Permission-запросы показываются оверлеем SelectList; Esc/Ctrl+C во время хода отменяют его. Esc выходит при пустом вводе (с черновиком он «взводит» выход — нажать дважды), Ctrl+C выходит всегда
+- Ход ограничен двумя watchdog'ами: 5 минут без активности агента отменяют его (`CGOOSE_ACP_IDLE_TIMEOUT_MS`), один ход ограничен 4 часами (`CGOOSE_ACP_PROMPT_TIMEOUT_MS`)
 - Требуется goose ≥ 1.57; иначе cgoose откатывается на классический `goose session`
 - Проверка: `bun run test` (без goose), `bun run acp:probe`, `bun run acp:smoke`
 

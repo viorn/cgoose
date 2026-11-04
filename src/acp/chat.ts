@@ -12,6 +12,7 @@
  *   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
  * On goose 1.57 the default profile is always loaded (`goose acp` has no
  * `--no-profile`), so set extensions are additive to it — the chat says so.
+ * Two watchdogs bound a turn (idle + hard cap, see ./timeouts.ts).
  * On resume Goose restores the stored extension set; the *current* set's prompt
  * is re-applied (or explicitly cleared when no set).
  */
@@ -21,6 +22,13 @@ import { dirname } from "node:path";
 import pc from "picocolors";
 
 import { buildMcpServers } from "./extensions";
+import {
+  DEFAULT_IDLE_TIMEOUT_MS,
+  DEFAULT_TURN_TIMEOUT_MS,
+  IDLE_TIMEOUT_ENV,
+  TURN_TIMEOUT_ENV,
+  resolveTimeoutMs,
+} from "./timeouts";
 import {
   Container,
   Editor,
@@ -131,6 +139,9 @@ const STATUS_ICON: Record<string, string> = {
   failed: "❌",
 };
 
+/** ACP `fs/read_text_file` default window (the spec suggests 2000 lines). */
+const DEFAULT_READ_LIMIT = 2000;
+
 export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // Keep the last stderr lines around so an agent crash can be explained.
   const stderrTail: string[] = [];
@@ -177,6 +188,20 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   let lastFlush = 0;
   let sessionId: string | null = null;
   let sessionTitle: string | undefined = opts.sessionTitle;
+
+  // Turn watchdogs (see ./timeouts.ts). `lastAgentActivity` is refreshed by
+  // every session/update, so only a *silent* agent is cancelled by the idle
+  // guard; the hard cap is the last-resort bound on one turn.
+  const idleTimeout = resolveTimeoutMs(process.env[IDLE_TIMEOUT_ENV], DEFAULT_IDLE_TIMEOUT_MS, IDLE_TIMEOUT_ENV);
+  const turnTimeout = resolveTimeoutMs(process.env[TURN_TIMEOUT_ENV], DEFAULT_TURN_TIMEOUT_MS, TURN_TIMEOUT_ENV);
+  const timeoutWarnings = [idleTimeout.invalid, turnTimeout.invalid].filter((w): w is string => w !== null);
+  let lastAgentActivity = 0;
+  let cancelRequested = false;
+  // The editor ignores Esc, so a non-empty draft would make it a dead key:
+  // the first Esc arms the exit, the second performs it. Any other key disarms
+  // it again (see the input listener).
+  let escArmedExit = false;
+  let exitHintShown = false;
 
   // ─── Agent → client handlers ──────────────────────────────────────────────
 
@@ -257,14 +282,14 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
     readTextFile: async (params) => {
       const content = await readFile(params.path as string, "utf-8");
-      // ACP may ask for a window instead of the whole file.
+      // ACP asks for a 1-based window (`line`, `limit`); the spec's default for
+      // `limit` is 2000 lines, which also keeps a huge file from flooding the
+      // model's context when the agent asks for everything.
       const line = Number(params.line ?? 0);
       const limit = Number(params.limit ?? 0);
-      if (!line && !limit) return { content };
-      const lines = content.split("\n");
-      const start = line > 0 ? line - 1 : 0;
-      const end = limit > 0 ? start + limit : undefined;
-      return { content: lines.slice(start, end).join("\n") };
+      const start = Number.isFinite(line) && line > 0 ? line - 1 : 0;
+      const count = Number.isFinite(limit) && limit > 0 ? limit : DEFAULT_READ_LIMIT;
+      return { content: content.split("\n").slice(start, start + count).join("\n") };
     },
 
     writeTextFile: async (params) => {
@@ -333,6 +358,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   };
 
   client.onUpdate((notification: SessionNotification) => {
+    // Any agent update counts as progress: the idle watchdog is reset.
+    lastAgentActivity = Date.now();
     const update = notification.update as any;
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
@@ -394,16 +421,19 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         closeThought();
         closeMessage();
         const existing = toolLines.get(update.toolCallId);
-        const icon = STATUS_ICON[update.status ?? ""] ?? "🔨";
+        // Merge with the stored status: a partial `tool_call_update` without a
+        // status must not demote an already finished line back to "in progress".
+        const status = update.status ?? existing?.status ?? "";
+        const icon = STATUS_ICON[status] ?? "🔨";
         const title = update.title ?? existing?.title ?? update.toolCallId;
         const line = `${icon} ${title}`;
         if (existing) {
           existing.title = title;
-          existing.status = update.status ?? existing.status;
+          existing.status = status;
           existing.component.setText(line);
         } else {
           const comp = new Text(line, 1, 0);
-          toolLines.set(update.toolCallId, { component: comp, title, status: update.status ?? "" });
+          toolLines.set(update.toolCallId, { component: comp, title, status });
           transcript.addChild(comp);
         }
         tui.requestRender();
@@ -492,6 +522,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   const finishTurn = (turnError?: string): void => {
     busy = false;
+    cancelRequested = false;
     setLoader(null);
     // A cancelled turn may leave permission requests hanging — resolve them so
     // the agent→client calls do not stay unanswered and the overlay closes.
@@ -499,7 +530,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     closeUser();
     closeThought();
     closeMessage();
-    if (turnError) {
+    // When the agent itself died, onAgentExit already explained why — do not
+    // tell the same story again with the transport error.
+    if (turnError && !agentDead) {
       transcript.addChild(new Text(pc.red(`⚠ ${turnError}`), 1, 0));
     }
     thoughtMd = null;
@@ -507,13 +540,14 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     tui.requestRender();
   };
 
-  // A turn may run for a long time, but not forever: without a watchdog a
-  // stuck agent freezes the UI (the request has no other timeout).
-  const promptTimeoutMs = Number(process.env.CGOOSE_ACP_PROMPT_TIMEOUT_MS ?? 30 * 60_000) || 0;
+  // A turn may run for a long time, but not forever: the idle watchdog cancels
+  // a silent agent, and the hard cap bounds the whole turn (./timeouts.ts).
 
   async function submitPrompt(text: string): Promise<void> {
     if (!sessionId || busy) return;
     busy = true;
+    cancelRequested = false;
+    lastAgentActivity = Date.now();
     transcript.addChild(new Text(pc.bold(`❯ ${text}`), 1, 0));
     currentMd = null;
     currentMessageId = null;
@@ -528,7 +562,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       const result = (await client.prompt(
         sessionId,
         [{ type: "text", text }],
-        promptTimeoutMs,
+        turnTimeout.ms,
       )) as PromptResponse;
       finishTurn(result.stopReason && result.stopReason !== "end_turn" && result.stopReason !== "cancelled"
         ? `turn ended: ${result.stopReason}`
@@ -546,7 +580,11 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     if (activePermission) return undefined;
     const escape = matchesKey(data, Key.escape);
     const ctrlC = matchesKey(data, Key.ctrl("c"));
-    if (!escape && !ctrlC) return undefined;
+    if (!escape && !ctrlC) {
+      // Any other key means the user is still typing — disarm the exit.
+      escArmedExit = false;
+      return undefined;
+    }
 
     if (agentDead || client.closed) {
       void shutdown();
@@ -558,17 +596,52 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       return { consume: true };
     }
     if (ctrlC) {
+      // Ctrl+C is the "just get me out" key: it always exits.
       void shutdown();
       return { consume: true };
     }
-    // Esc must not silently discard a draft or close the autocomplete menu:
-    // let the editor handle it in those cases.
-    if (editor.getText().length > 0 || editor.capturesViewportInput) {
-      return undefined;
+    // Esc with the autocomplete menu open belongs to the editor (it closes the
+    // menu) — the draft must survive that.
+    if (editor.capturesViewportInput) return undefined;
+    // The editor does not handle Esc itself, so a non-empty draft used to make
+    // Esc a dead key. Require a second Esc instead of silently doing nothing.
+    if (editor.getText().length > 0 && !escArmedExit) {
+      escArmedExit = true;
+      if (!exitHintShown) {
+        exitHintShown = true;
+        transcript.addChild(new Text(
+          pc.dim("Esc again to exit (the draft will be lost) · Ctrl+C exits right away"),
+          1, 0,
+        ));
+        tui.requestRender();
+      }
+      return { consume: true };
     }
     void shutdown();
     return { consume: true };
   });
+
+  // Idle watchdog: a long but *live* turn must not be interrupted, a silent one
+  // must not leave the UI stuck with `busy` forever (the request itself has no
+  // deadline until the hard cap).
+  if (idleTimeout.ms > 0) {
+    const checkEvery = Math.max(1_000, Math.min(30_000, Math.floor(idleTimeout.ms / 4)));
+    const idleTimer = setInterval(() => {
+      if (!busy || !sessionId || exiting || agentDead || cancelRequested) return;
+      const silentFor = Date.now() - lastAgentActivity;
+      if (silentFor < idleTimeout.ms) return;
+      cancelRequested = true;
+      transcript.addChild(new Text(
+        pc.yellow(`⚠ no agent activity for ${Math.round(silentFor / 60_000)} min — cancelling the turn`),
+        1, 0,
+      ));
+      setLoader("cancelling…");
+      client.cancel(sessionId);
+      tui.requestRender();
+    }, checkEvery);
+    // Never keep the process alive by itself: the chat owns the lifetime.
+    (idleTimer as unknown as { unref?: () => void }).unref?.();
+  }
 
   async function shutdown(): Promise<void> {
     if (exiting) return;
@@ -603,6 +676,10 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   tui.setFocus(editor);
   renderHeader();
   renderStatus();
+  for (const warning of timeoutWarnings) {
+    transcript.addChild(new Text(pc.yellow(`⚠ ${warning}`), 1, 0));
+  }
+  tui.requestRender();
 
   // ─── Initialize + session setup ───────────────────────────────────────────
 
