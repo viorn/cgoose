@@ -483,7 +483,14 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   tui.addChild(new Spacer());
   tui.addChild(transcript);
 
-  const loader = new Loader(tui, (s) => pc.cyan(s), (s) => pc.dim(s), "thinking…");
+  // The Loader re-renders every 80 ms to animate the spinner. In a main-screen
+  // TUI each render writes at the cursor (the last line), which makes the
+  // terminal jump back to the bottom — so while the agent is thinking in
+  // silence the user cannot scroll up through the history. Give it a no-op UI:
+  // ticks only advance the frame text, painting happens on the next *real*
+  // render (streamed chunks, tool calls), and an idle turn writes nothing.
+  const inertUi = { requestRender: () => {} } as unknown as TUI;
+  const loader = new Loader(inertUi, (s) => pc.cyan(s), (s) => pc.dim(s), "thinking…");
   // The constructor starts the animation; keep it idle until a turn runs.
   loader.stop();
   loader.setText("");
@@ -499,6 +506,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
     loader.setMessage(message);
     loader.start();
+    // The loader no longer requests renders itself (see inertUi above).
+    tui.requestRender();
   };
 
   const editor = new Editor(tui, editorTheme, { paddingX: 1 });
