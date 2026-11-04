@@ -20,6 +20,16 @@ Goose TUI is an opt-in fallback (`ROSSII_ACP_MODE=classic`).
 
 ---
 
+## Demo — the chat
+
+![rossii chat](chat.gif)
+
+Live configuration from inside the running chat — the `/config` dialog, the model list with its
+context limits (here **Fetch models from API** pulled 712 models from the provider), and a prompt
+answered without leaving the session.
+
+---
+
 ## Demo — the wizard
 
 ![rossii workflow](flow.gif)
