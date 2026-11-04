@@ -4,7 +4,9 @@
 Ветка       : main
 HEAD        : e9d5e42  docs+skill: live-verified session sets on resume; tmux TUI testing skill
 Remote      : origin/main = e9d5e42 (синхронизировано, рабочее дерево чистое)
-Версия      : 2.2.1 (package.json)
+Версия      : 2.3.0 (package.json, HEAD)
+Установлено : ~/.local/bin/cgoose ← cgoose-2.3.0-linux-x86_64
+              sha256 b37e394832f2099b… (сборка 2026-11-04 16:44 MSK)
 Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun
 
 ## Коммиты этого цикла
