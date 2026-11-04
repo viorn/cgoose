@@ -9,7 +9,8 @@
  *
  * Chat (ACP) mode spawns `goose acp`, negotiates the Agent Client Protocol
  * over stdio and renders the dialog itself (src/acp/chat.ts). Session sets are
- * applied via `_meta.goose.enabledExtensions` on `session/new` and the goose
+ * applied via builtins on the agent command line (`--with-builtin`), stdio/http
+ * extensions in the standard ACP `session/new.mcpServers` field, and the goose
  * custom request `_goose/unstable/session/system-prompt/set`.
  *
  * Git worktree integration (both modes):
@@ -332,9 +333,8 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
   prepared.launchEnv["GOOSE_PROVIDER"] = opts.providerInfo.name;
   prepared.launchEnv["GOOSE_MODEL"] = opts.model;
 
-  // Extensions travel per-session via `_meta.goose.enabledExtensions` on
-  // `session/new` (builtin/platform/mcp entries); nothing is passed on the
-  // agent command line.
+  // Builtins go on the agent command line (`goose acp --with-builtin`); stdio
+  // and streamable-http extensions travel per-session in `session/new.mcpServers`.
   const set = prepared.set;
   const extArgs = set ? buildExtensionArgs(set.extensions ?? []) : { builtins: [], stdio: [], http: [], warnings: [] };
   for (const warning of extArgs.warnings) {

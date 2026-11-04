@@ -48,15 +48,20 @@ stdioExtensions: ["mcpls --trust-project-config"]   # raw --with-extension comma
 - `systemPrompt` → passed via `--system`
 - `builtins` → passed via `--with-builtin <comma,separated>`
 - `extensions` → names of extensions declared in `~/.config/goose/config.yaml`, resolved by `src/goose-extensions.ts`: `builtin`/`platform` → `--with-builtin`, `stdio` → `--with-extension "name:ENV=val cmd args..."`, `streamable_http` → `--with-streamable-http-extension "<uri> timeout=N"`. Unknown names produce a launcher warning and are skipped
-- `stdioExtensions` → passed verbatim to `--with-extension`
-- Any set (and `None`) is launched with `--no-profile`: only what the set lists is loaded
+- `stdioExtensions` → passed verbatim to `--with-extension` in classic mode; in chat mode the
+  `[name:]` prefix is optional and the name is derived from the launcher command
+- Classic mode launches any set (and `None`) with `--no-profile`: only what the set lists is loaded
+- **Chat mode (goose 1.57) cannot do that**: `goose acp` has no `--no-profile`, so the default
+  profile always loads and the set's extensions are added on top of it. The chat prints a warning
+  for every non-Default set
 - Created/managed via the TUI: **Set → ⚙️ Create new set...** / **Manage sets...**, or manually in `~/.config/cgoose/sets/`
 
 ### "None" vs "Default" vs a set
 
-- **None** (`""`) → `--no-profile` only: a session with **no extensions at all**
+- **None** (`""`) → classic: `--no-profile` only, a session with **no extensions at all**;
+  chat: cannot hide profile extensions on goose 1.57 (warning shown)
 - **Default** (`__default__` sentinel in `src/launcher.ts`) → no flags at all, so Goose loads the profile from `~/.config/goose/config.yaml`
-- **Set** → exactly the flags derived from the set
+- **Set** → classic: exactly the flags derived from the set; chat: the set's extensions plus the profile
 
 Extension flags are only effective when a session is **created**. On resume Goose restores the extension list stored in `sessions.extension_data` and ignores CLI extension flags; `setHistory[0]` may hold the `__default__` sentinel.
 
@@ -92,31 +97,41 @@ JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/p
 
 - CLI flag: `-c` (and pairs `mc` = no worktree, `wc` = force worktree, `ac`/`nc`/`sc`/`ca`/`cn`/`cs`)
 - Implementation: `src/acp/` — `client.ts` (transport), `custom.ts` (goose custom
-  requests, methods `_goose/unstable/...`), `chat.ts` (pi-tui based chat UI)
+  requests, methods `_goose/unstable/...`), `extensions.ts` (spec → ACP `mcpServers`,
+  pure and unit-tested), `chat.ts` (pi-tui based chat UI)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
 - Session sets in chat mode (channels verified on goose 1.57 via `acp-client-smoke`):
   - builtins → `goose acp --with-builtin <names>` on the agent command line
   - stdio/streamable-http extensions → standard ACP `mcpServers` on `session/new`
-    (works on 1.57, additive to the profile)
-  - `_meta.goose.enabledExtensions` is sent as well, but goose 1.57 ignores it —
-    on this version the default profile always loads, so the None set cannot hide
-    profile extensions (a warning is printed in the chat)
+    (works on 1.57). `_meta.goose.enabledExtensions` is **not** sent: 1.57 ignores it
+    and newer versions could double-register extensions
+  - `goose acp` has no `--no-profile`, so the default profile always loads and set
+    extensions are additive; a warning is printed for any non-Default set
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
-    (`mode: "set"`, key `cgoose`); empty text clears it — same "set is the source of
-    truth" semantics as classic `--system`
+    (`mode: "set"`, key `cgoose`); empty text clears it — same "set is source of
+    truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
 - ACP sessions live in the same `sessions.db`, so the wizard's session picker sees them;
   resume uses `session/load` (requires the agent's `loadSession` capability, checked at
-  startup; goose replays pending permissions from the stored conversation)
-- Permissions (`session/request_permission`) are rendered as a SelectList overlay;
-  Esc/Ctrl+C during a turn sends `session/cancel`, while the overlay is open they
-  belong to the list (reject that tool call)
+  startup) and replays history: `user_message_chunk` is rendered and `messageId`
+  boundaries split assistant messages
+- Permissions (`session/request_permission`) are rendered as a SelectList overlay and
+  queued (parallel tool calls); Esc/Ctrl+C during a turn sends `session/cancel`, while
+  the overlay is open they belong to the list (reject that tool call). Pending requests
+  are resolved as `cancelled` on turn end, agent exit and shutdown
+- If `goose acp` dies, the chat stops accepting prompts and Esc exits; `send()` refuses
+  to write to a closed transport, so no request can hang forever
+- `fs/read_text_file` / `fs/write_text_file` are served for any path the agent asks for
+  (no worktree sandbox; write creates parent dirs). ACP clients are trusted — MCP servers
+  effectively get the same access
+- `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 30 min) bounds a single turn; on timeout the
+  client sends `session/cancel` and the UI reports the error
 - Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.goose.provider`
 - Requires goose ≥ ~1.57 (`goose acp` + `_goose/unstable/*` methods); `launchGooseAcp`
   checks `goose acp --help` at startup and falls back to the classic TUI otherwise
-- Verification scripts: `bun scripts/acp-probe.ts` (raw protocol) and
-  `bun scripts/acp-client-smoke.ts` (src/acp/client.ts without the TUI; includes an
-  `enabledExtensions` round-trip check)
+- Verification scripts: `bun run test` (unit tests for `extensions.ts`, no goose needed),
+  `bun scripts/acp-probe.ts` (raw protocol) and `bun scripts/acp-client-smoke.ts`
+  (`src/acp/client.ts` without the TUI; checks the `mcpServers` channel)
 
 ## Data Paths
 

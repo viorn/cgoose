@@ -6,16 +6,21 @@
  * Handles agent→client requests: session/request_permission (SelectList
  * overlay), fs/read_text_file, fs/write_text_file.
  *
- * Session sets are applied on session creation:
- *   - extensions → `_meta.goose.enabledExtensions` (builtin/platform/mcp entries)
+ * Session sets in chat mode:
+ *   - builtins → `goose acp --with-builtin …` on the agent command line
+ *   - stdio/http extensions → standard ACP `session/new.mcpServers`
  *   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
- * On resume Goose restores the stored extension set (same as classic mode);
- * the *current* set's prompt is re-applied (or explicitly cleared when no set).
+ * On goose 1.57 the default profile is always loaded (`goose acp` has no
+ * `--no-profile`), so set extensions are additive to it — the chat says so.
+ * On resume Goose restores the stored extension set; the *current* set's prompt
+ * is re-applied (or explicitly cleared when no set).
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import pc from "picocolors";
+
+import { buildMcpServers } from "./extensions";
 import {
   Container,
   Editor,
@@ -35,7 +40,6 @@ import { AcpClient } from "./client";
 import { setSessionSystemPrompt } from "./custom";
 import type { SessionSet } from "../cgoose-config";
 import type {
-  GooseExtension,
   PromptResponse,
   RequestPermissionResponse,
   SessionNotification,
@@ -59,7 +63,7 @@ export interface AcpChatOptions {
   useDefaultProfile: boolean;
   /** Builtin names resolved from the set + goose config.yaml. */
   agentBuiltins: string[];
-  /** Raw stdio extension specs (`name:ENV=val cmd args...`) from the set. */
+  /** Raw stdio extension specs (`[name:]ENV=val cmd args...`) from the set. */
   stdioExtensionSpecs: string[];
   /** Streamable HTTP extension URIs (`url timeout=N`). */
   httpExtensionUris: string[];
@@ -103,77 +107,16 @@ const dimMarkdownTheme = {
   bold: (s: string) => pc.bold(pc.dim(s)),
 };
 
-// ─── Extension mapping (cgoose set → ACP `_meta.goose.enabledExtensions`) ────
-
-/**
- * Parse a goose stdio spec `name:ENV=val cmd args...` (same format as
- * `goose session --with-extension`). Leading `KEY=value` tokens are env vars.
- */
-function parseStdioSpec(spec: string): GooseExtension | null {
-  const colonIdx = spec.indexOf(":");
-  if (colonIdx === -1) return null;
-  const name = spec.slice(0, colonIdx);
-  const tokens = spec.slice(colonIdx + 1).trim().split(/\s+/).filter(Boolean);
-  const env: { name: string; value: string }[] = [];
-  let i = 0;
-  while (i < tokens.length && /^\w+=/.test(tokens[i])) {
-    const eq = tokens[i].indexOf("=");
-    env.push({ name: tokens[i].slice(0, eq), value: tokens[i].slice(eq + 1) });
-    i++;
-  }
-  if (i >= tokens.length) return null;
-  return {
-    type: "mcp",
-    server: { type: "stdio", name, command: tokens[i], args: tokens.slice(i + 1), env },
-  };
-}
-
-/** Parse a goose streamable-http spec `url timeout=N` into an MCP http server. */
-function parseHttpSpec(spec: string): GooseExtension | null {
-  const url = spec.trim().split(/\s+/)[0];
-  if (!url) return null;
-  const name = url.replace(/^\w+:\/\//, "").replace(/[^a-zA-Z0-9._-]/g, "-");
-  return { type: "mcp", server: { type: "http", name, url } };
-}
-
-function buildEnabledExtensions(opts: AcpChatOptions): GooseExtension[] | undefined {
-  // No set:
-  //  - Default (`__default__`) → undefined → goose loads its default profile
-  //  - None ("") → [] → ask for a session with no extensions
-  // Note: goose 1.57 ignores this field (verified via acp-client-smoke); kept
-  // for newer goose versions where it replaces the default profile.
-  if (!opts.set) return opts.useDefaultProfile ? undefined : [];
-  const result: GooseExtension[] = [];
-  for (const name of opts.agentBuiltins) {
-    result.push({ type: "builtin", name });
-  }
-  for (const spec of opts.stdioExtensionSpecs) {
-    const ext = parseStdioSpec(spec);
-    if (ext) result.push(ext);
-  }
-  for (const spec of opts.httpExtensionUris) {
-    const ext = parseHttpSpec(spec);
-    if (ext) result.push(ext);
-  }
-  return result;
-}
-
-/** MCP servers for the standard ACP `session/new.mcpServers` field — the one
- *  channel verified to work on goose 1.57 for stdio/http extensions. */
-function buildMcpServers(opts: AcpChatOptions): unknown[] {
-  const servers: unknown[] = [];
-  for (const spec of opts.stdioExtensionSpecs) {
-    const ext = parseStdioSpec(spec);
-    if (ext?.type === "mcp") servers.push(ext.server);
-  }
-  for (const spec of opts.httpExtensionUris) {
-    const ext = parseHttpSpec(spec);
-    if (ext?.type === "mcp") servers.push(ext.server);
-  }
-  return servers;
-}
-
 // ─── Chat session ────────────────────────────────────────────────────────────
+
+/** Render an ACP `Cost` object (`{ amount, currency }`) for the status line. */
+function formatCost(cost: any): string {
+  if (!cost || typeof cost.amount !== "number") return "";
+  const amount = cost.amount.toFixed(4);
+  const currency = typeof cost.currency === "string" ? cost.currency : "";
+  if (!currency) return ` · ${amount}`;
+  return currency.toUpperCase() === "USD" ? ` · $${amount}` : ` · ${amount} ${currency}`;
+}
 
 interface ToolLine {
   component: Text;
@@ -193,6 +136,10 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   const stderrTail: string[] = [];
   let setupFailed = false;
 
+  // Assigned once the UI exists: the agent may exit before that (spawn
+  // failure), and touching TDZ variables from the transport would throw.
+  let onAgentExit: (code: number | null) => void = () => {};
+
   const client = AcpClient.spawn({
     cwd: opts.cwd,
     env: opts.env,
@@ -206,17 +153,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         process.stderr.write(`${pc.dim(line)}\n`);
       }
     },
-    onExit: () => {
-      // Called from the transport; guard against use before UI exists.
-      if (!tui || exiting) return;
-      busy = false;
-      loader.stop();
-      transcript.addChild(new Text(pc.red("⚠ goose acp exited unexpectedly"), 1, 0));
-      for (const line of stderrTail.slice(-5)) {
-        transcript.addChild(new Text(pc.dim(line), 1, 0));
-      }
-      tui.requestRender();
-    },
+    onExit: (code) => onAgentExit(code),
   });
 
   const terminal = new ProcessTerminal();
@@ -224,63 +161,110 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   const transcript = new Container();
   const statusLine = new Text("", 0, 0);
+  const headerLine = new Text("", 1, 0);
   let currentMd: Markdown | null = null;
+  let currentMessageId: string | null = null;
   let streamBuffer = "";
   let thoughtMd: Markdown | null = null;
   let thoughtBuffer = "";
+  let userLine: Text | null = null;
+  let userBuffer = "";
+  let userMessageId: string | null = null;
   const toolLines = new Map<string, ToolLine>();
   let busy = false;
   let exiting = false;
+  let agentDead = false;
   let lastFlush = 0;
   let sessionId: string | null = null;
+  let sessionTitle: string | undefined = opts.sessionTitle;
 
   // ─── Agent → client handlers ──────────────────────────────────────────────
 
-  // Pending permission bookkeeping: Esc must go to the SelectList while the
-  // overlay is open, and a turn end/cancel must resolve a hanging request.
-  let permissionActive = false;
-  let cancelPendingPermission: (() => void) | null = null;
+  // Permission requests are queued: goose may ask about several tool calls in
+  // parallel, while only one overlay can be visible at a time. Every pending
+  // request must be answered, otherwise the agent waits forever.
+  interface PendingPermission {
+    params: any;
+    resolve: (response: RequestPermissionResponse) => void;
+  }
+  const permissionQueue: PendingPermission[] = [];
+  let activePermission: { finish: (response: RequestPermissionResponse) => void } | null = null;
+
+  const cancelAllPermissions = (): void => {
+    // Drain the queue first so `finish()` cannot pop a new overlay while we
+    // are resolving the rest.
+    const pending = permissionQueue.splice(0);
+    const active = activePermission;
+    activePermission = null;
+    active?.finish({ outcome: { outcome: "cancelled" } });
+    for (const entry of pending) {
+      entry.resolve({ outcome: { outcome: "cancelled" } });
+    }
+  };
+
+  const showNextPermission = (): void => {
+    if (activePermission || exiting || agentDead) return;
+    const next = permissionQueue.shift();
+    if (!next) return;
+
+    const params = next.params;
+    const options = Array.isArray(params?.options) ? params.options : [];
+    const items = options.map((o: any) => ({
+      value: o.optionId,
+      label: o.name ?? o.optionId,
+      description: o.description,
+    }));
+    const title = params?.toolCall?.title ?? "Permission required";
+    const header = new Text(pc.bold(`⚡ ${title}`), 1, 0);
+    const list = new SelectList(
+      items.length > 0 ? items : [{ value: "cancel", label: "Cancel" }],
+      6,
+      selectListTheme,
+    );
+    let finished = false;
+    const finish = (response: RequestPermissionResponse): void => {
+      if (finished) return;
+      finished = true;
+      activePermission = null;
+      tui.hideOverlay();
+      tui.setFocus(editor);
+      next.resolve(response);
+      showNextPermission();
+    };
+    activePermission = { finish };
+    list.onSelect = (item: any) => {
+      finish(item.value === "cancel"
+        ? { outcome: { outcome: "cancelled" } }
+        : { outcome: { outcome: "selected", optionId: String(item.value) } });
+    };
+    list.onCancel = () => finish({ outcome: { outcome: "cancelled" } });
+    const box = new Container();
+    box.addChild(header);
+    box.addChild(list);
+    tui.showOverlay(box, { width: 72 });
+    tui.setFocus(list);
+  };
 
   client.setPromptHandlers({
     requestPermission: (params) => new Promise<RequestPermissionResponse>((resolve) => {
-      const options = Array.isArray(params?.options) ? params.options : [];
-      const items = options.map((o: any) => ({
-        value: o.optionId,
-        label: o.name ?? o.optionId,
-        description: o.description,
-      }));
-      const title = params?.toolCall?.title ?? "Permission required";
-      const header = new Text(pc.bold(`⚡ ${title}`), 1, 0);
-      const list = new SelectList(
-        items.length > 0 ? items : [{ value: "cancel", label: "Cancel" }],
-        6,
-        selectListTheme,
-      );
-      permissionActive = true;
-      const finish = (response: RequestPermissionResponse): void => {
-        permissionActive = false;
-        cancelPendingPermission = null;
-        tui.hideOverlay();
-        tui.setFocus(editor);
-        resolve(response);
-      };
-      cancelPendingPermission = () => finish({ outcome: { outcome: "cancelled" } });
-      list.onSelect = (item: any) => {
-        finish(item.value === "cancel"
-          ? { outcome: { outcome: "cancelled" } }
-          : { outcome: { outcome: "selected", optionId: String(item.value) } });
-      };
-      list.onCancel = () => finish({ outcome: { outcome: "cancelled" } });
-      const box = new Container();
-      box.addChild(header);
-      box.addChild(list);
-      tui.showOverlay(box, { width: 72 });
-      tui.setFocus(list);
+      if (exiting || agentDead) {
+        resolve({ outcome: { outcome: "cancelled" } });
+        return;
+      }
+      permissionQueue.push({ params, resolve });
+      showNextPermission();
     }),
 
     readTextFile: async (params) => {
       const content = await readFile(params.path as string, "utf-8");
-      return { content };
+      // ACP may ask for a window instead of the whole file.
+      const line = Number(params.line ?? 0);
+      const limit = Number(params.limit ?? 0);
+      if (!line && !limit) return { content };
+      const lines = content.split("\n");
+      const start = line > 0 ? line - 1 : 0;
+      const end = limit > 0 ? start + limit : undefined;
+      return { content: lines.slice(start, end).join("\n") };
     },
 
     writeTextFile: async (params) => {
@@ -296,9 +280,17 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   /** Close the current thought block so the next burst renders separately. */
   const closeThought = (): void => {
     if (thoughtMd) {
+      thoughtMd.setText(thoughtBuffer);
       thoughtMd = null;
       thoughtBuffer = "";
     }
+  };
+
+  /** Close the replayed user message block (chunks of one message are merged). */
+  const closeUser = (): void => {
+    userLine = null;
+    userBuffer = "";
+    userMessageId = null;
   };
 
   /** Close the current agent message block (a tool call splits the answer). */
@@ -308,6 +300,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       currentMd = null;
       streamBuffer = "";
     }
+    currentMessageId = null;
   };
 
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -335,6 +328,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
     if (thoughtMd) {
       thoughtMd.setText(thoughtBuffer);
+      tui.requestRender();
     }
   };
 
@@ -343,13 +337,42 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
         if (update.content?.type === "text") {
+          closeUser();
           closeThought();
+          // A new messageId means a new message (history replay relies on it).
+          const messageId = typeof update.messageId === "string" ? update.messageId : null;
+          if (messageId && messageId !== currentMessageId) closeMessage();
+          if (messageId) currentMessageId = messageId;
           if (!currentMd) {
             currentMd = new Markdown("", 1, 0, markdownTheme);
             transcript.addChild(currentMd);
           }
           streamBuffer += update.content.text;
           flushStream();
+        }
+        break;
+      }
+      case "user_message_chunk": {
+        if (update.content?.type === "text") {
+          // A live turn already echoed the prompt locally; replay
+          // (session/load) arrives while idle and must be rendered. Chunks of
+          // one message are merged into a single line.
+          if (busy) break;
+          closeThought();
+          closeMessage();
+          const messageId = typeof update.messageId === "string" ? update.messageId : null;
+          if (userLine && messageId && userMessageId && messageId !== userMessageId) {
+            closeUser();
+          }
+          if (!userLine) {
+            userLine = new Text("", 1, 0);
+            transcript.addChild(userLine);
+            userBuffer = "";
+            userMessageId = messageId;
+          }
+          userBuffer += update.content.text;
+          userLine.setText(pc.bold(`❯ ${userBuffer}`));
+          tui.requestRender();
         }
         break;
       }
@@ -367,6 +390,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       }
       case "tool_call":
       case "tool_call_update": {
+        closeUser();
         closeThought();
         closeMessage();
         const existing = toolLines.get(update.toolCallId);
@@ -386,14 +410,15 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         break;
       }
       case "usage_update": {
-        const cost = update.cost?.total ?? update.cost?.totalCost;
-        const costStr = typeof cost === "number" ? ` · $${cost.toFixed(4)}` : "";
-        usagePart = `tokens ${update.used}/${update.size}${costStr}`;
+        usagePart = `tokens ${update.used}/${update.size}${formatCost(update.cost)}`;
         renderStatus();
         break;
       }
       case "session_info_update": {
-        renderStatus();
+        if (typeof update.title === "string" && update.title) {
+          sessionTitle = update.title;
+          renderHeader();
+        }
         break;
       }
       default:
@@ -410,21 +435,41 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       .join(pc.dim("  ")));
     tui.requestRender();
   };
+  const renderHeader = (): void => {
+    const title = sessionTitle ? `  ${pc.dim(`· ${sessionTitle}`)}` : "";
+    headerLine.setText(
+      `${pc.green("🪿 cgoose chat")}  ${pc.dim(`${opts.provider}/${opts.model}  ${opts.cwd}`)}${title}`,
+    );
+    tui.requestRender();
+  };
 
   // ─── UI ───────────────────────────────────────────────────────────────────
 
-  tui.addChild(new Text(
-    `${pc.green("🪿 cgoose chat")}  ${pc.dim(`${opts.provider}/${opts.model}  ${opts.cwd}`)}`,
-    1,
-    0,
-  ));
+  tui.addChild(headerLine);
   const setLabel = opts.set?.title ?? (opts.useDefaultProfile ? "Default (goose config.yaml)" : undefined);
   if (setLabel !== undefined) {
     tui.addChild(new Text(pc.dim(`set: ${setLabel}`), 1, 0));
   }
   tui.addChild(new Spacer());
   tui.addChild(transcript);
+
+  const loader = new Loader(tui, (s) => pc.cyan(s), (s) => pc.dim(s), "thinking…");
+  // The constructor starts the animation; keep it idle until a turn runs.
+  loader.stop();
+  loader.setText("");
+  tui.addChild(loader);
   tui.addChild(new Spacer());
+
+  const setLoader = (message: string | null): void => {
+    if (message === null) {
+      loader.stop();
+      loader.setText("");
+      tui.requestRender();
+      return;
+    }
+    loader.setMessage(message);
+    loader.start();
+  };
 
   const editor = new Editor(tui, editorTheme, { paddingX: 1 });
   tui.addChild(editor);
@@ -432,6 +477,11 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   editor.onSubmit = (value: string) => {
     const text = value.trim();
     if (!text || busy) return;
+    if (agentDead || client.closed) {
+      transcript.addChild(new Text(pc.red("⚠ goose acp is not running — press Esc to exit."), 1, 0));
+      tui.requestRender();
+      return;
+    }
     if (setupFailed || !sessionId) {
       transcript.addChild(new Text(pc.red("⚠ No ACP session — press Esc to exit."), 1, 0));
       tui.requestRender();
@@ -442,40 +492,44 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   const finishTurn = (turnError?: string): void => {
     busy = false;
-    loader.stop();
-    // A cancelled turn may leave a permission request hanging — resolve it so
-    // the agent→client call does not stay unanswered and the overlay closes.
-    if (permissionActive) cancelPendingPermission?.();
-    if (currentMd) flushStream(true);
-    else if (turnError) {
+    setLoader(null);
+    // A cancelled turn may leave permission requests hanging — resolve them so
+    // the agent→client calls do not stay unanswered and the overlay closes.
+    cancelAllPermissions();
+    closeUser();
+    closeThought();
+    closeMessage();
+    if (turnError) {
       transcript.addChild(new Text(pc.red(`⚠ ${turnError}`), 1, 0));
     }
-    // Reset per-turn buffers; rendered tool lines stay in the transcript
-    // (the Map is cleared when the next turn starts, not here — a cancelled
-    // turn should keep its already rendered tool lines).
-    currentMd = null;
-    streamBuffer = "";
     thoughtMd = null;
     thoughtBuffer = "";
     tui.requestRender();
   };
 
-  const loader = new Loader(tui, (s) => pc.cyan(s), (s) => pc.dim(s), "thinking…");
+  // A turn may run for a long time, but not forever: without a watchdog a
+  // stuck agent freezes the UI (the request has no other timeout).
+  const promptTimeoutMs = Number(process.env.CGOOSE_ACP_PROMPT_TIMEOUT_MS ?? 30 * 60_000) || 0;
 
   async function submitPrompt(text: string): Promise<void> {
     if (!sessionId || busy) return;
     busy = true;
     transcript.addChild(new Text(pc.bold(`❯ ${text}`), 1, 0));
     currentMd = null;
+    currentMessageId = null;
     streamBuffer = "";
     thoughtMd = null;
     thoughtBuffer = "";
+    closeUser();
     toolLines.clear();
-    loader.setMessage("thinking…");
-    loader.start();
+    setLoader("thinking…");
     editor.disableSubmit = true;
     try {
-      const result = (await client.prompt(sessionId, [{ type: "text", text }])) as PromptResponse;
+      const result = (await client.prompt(
+        sessionId,
+        [{ type: "text", text }],
+        promptTimeoutMs,
+      )) as PromptResponse;
       finishTurn(result.stopReason && result.stopReason !== "end_turn" && result.stopReason !== "cancelled"
         ? `turn ended: ${result.stopReason}`
         : undefined);
@@ -489,33 +543,39 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   tui.addInputListener((data: string): { consume?: boolean } | undefined => {
     // While the permission overlay is open, Esc/Ctrl+C belong to the SelectList
     // (reject this tool call) — do not intercept them here.
-    if (permissionActive) return undefined;
-    if (matchesKey(data, Key.escape)) {
-      if (busy && sessionId) {
-        client.cancel(sessionId);
-        loader.setMessage("cancelling…");
-      } else if (!busy) {
-        void shutdown();
-      }
+    if (activePermission) return undefined;
+    const escape = matchesKey(data, Key.escape);
+    const ctrlC = matchesKey(data, Key.ctrl("c"));
+    if (!escape && !ctrlC) return undefined;
+
+    if (agentDead || client.closed) {
+      void shutdown();
       return { consume: true };
     }
-    if (matchesKey(data, Key.ctrl("c"))) {
-      if (busy && sessionId) {
-        client.cancel(sessionId);
-        loader.setMessage("cancelling…");
-      } else {
-        void shutdown();
-      }
+    if (busy && sessionId) {
+      client.cancel(sessionId);
+      setLoader("cancelling…");
       return { consume: true };
     }
-    return undefined;
+    if (ctrlC) {
+      void shutdown();
+      return { consume: true };
+    }
+    // Esc must not silently discard a draft or close the autocomplete menu:
+    // let the editor handle it in those cases.
+    if (editor.getText().length > 0 || editor.capturesViewportInput) {
+      return undefined;
+    }
+    void shutdown();
+    return { consume: true };
   });
 
   async function shutdown(): Promise<void> {
     if (exiting) return;
     exiting = true;
     // Do not leave the agent waiting for a permission answer.
-    cancelPendingPermission?.();
+    cancelAllPermissions();
+    setLoader(null);
     try {
       await client.stop();
     } finally {
@@ -524,8 +584,24 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
   }
 
+  // The agent may die at any moment: stop accepting prompts and say why.
+  onAgentExit = () => {
+    if (exiting || agentDead) return;
+    agentDead = true;
+    busy = false;
+    setLoader(null);
+    cancelAllPermissions();
+    transcript.addChild(new Text(pc.red("⚠ goose acp exited unexpectedly"), 1, 0));
+    for (const line of stderrTail.slice(-5)) {
+      transcript.addChild(new Text(pc.dim(line), 1, 0));
+    }
+    transcript.addChild(new Text(pc.dim("Press Esc to exit."), 1, 0));
+    tui.requestRender();
+  };
+
   tui.start();
   tui.setFocus(editor);
+  renderHeader();
   renderStatus();
 
   // ─── Initialize + session setup ───────────────────────────────────────────
@@ -536,27 +612,28 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       _meta: { goose: { customNotifications: true } },
     });
 
-    const enabledExtensions = buildEnabledExtensions(opts);
     if (opts.isNew) {
       const response = await client.newSession({
         cwd: opts.cwd,
-        mcpServers: buildMcpServers(opts),
+        mcpServers: buildMcpServers({
+          stdio: opts.stdioExtensionSpecs,
+          http: opts.httpExtensionUris,
+        }),
         _meta: {
           goose: {
             client: "cgoose",
             sessionTitle: opts.sessionTitle,
             provider: opts.provider,
-            enabledExtensions,
           },
         },
       });
       sessionId = response.sessionId;
-      // goose 1.57 loads the default profile regardless of `enabledExtensions`
-      // (verified via acp-client-smoke), so "None" cannot hide profile
-      // extensions on this version — be honest about it.
-      if (!opts.useDefaultProfile && !opts.set && opts.agentBuiltins.length === 0) {
+      // goose 1.57 has no `--no-profile` for `goose acp` and ignores
+      // `_meta.goose.enabledExtensions`, so the default profile is always
+      // loaded: a set's extensions are added on top of it, not instead of it.
+      if (!opts.useDefaultProfile) {
         transcript.addChild(new Text(
-          pc.yellow("⚠ None set: this goose version still loads the default profile extensions in chat mode."),
+          pc.yellow("⚠ This goose version always loads the default profile in chat mode: set extensions are added on top of it."),
           1, 0,
         ));
       }
@@ -571,17 +648,32 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         mcpServers: [],
       });
       sessionId = opts.resumeSessionId;
+      // Replay arrived as session/update notifications; close the last block so
+      // the next turn starts fresh.
+      closeUser();
+      closeMessage();
+      closeThought();
+      tui.requestRender();
     }
 
     // The set is the source of truth for the system prompt — same semantics as
     // classic mode's `--system`: apply the current set's prompt, or explicitly
-    // clear any previously stored one when no set is selected.
+    // clear any previously stored one when no set is selected. This is a
+    // version-sensitive `_goose/unstable/*` method: failing to apply the
+    // prompt must not kill an otherwise working session.
     if (sessionId) {
-      await setSessionSystemPrompt(client, sessionId, {
-        mode: "set",
-        key: "cgoose",
-        text: opts.set?.systemPrompt ?? "",
-      });
+      try {
+        await setSessionSystemPrompt(client, sessionId, {
+          mode: "set",
+          key: "cgoose",
+          text: opts.set?.systemPrompt ?? "",
+        });
+      } catch (error) {
+        transcript.addChild(new Text(
+          pc.yellow(`⚠ System prompt not applied: ${String((error as Error)?.message ?? error)}`),
+          1, 0,
+        ));
+      }
     }
     tui.requestRender();
   } catch (error) {

@@ -74,8 +74,9 @@ async function main(): Promise<void> {
   const exts = await listSessionExtensions(client, session.sessionId);
   console.log("extensions:", exts.map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`).join(", "));
 
-  // enabledExtensions must actually reach the session: create one with a
-  // single builtin and verify it is the only enabled extension.
+  // `_meta.goose.enabledExtensions` is a goose-specific channel that cgoose no
+  // longer uses (1.57 ignores it, and newer versions could double-register).
+  // Keep it as an informational probe of the installed goose.
   const constrained = await client.newSession({
     cwd: process.cwd(),
     mcpServers: [],
@@ -93,13 +94,12 @@ async function main(): Promise<void> {
     .map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`);
   console.log("constrained session extensions:", enabledNames.join(", ") || "(none)");
   const hasDeveloper = enabledNames.some((n: string) => n === "builtin:developer");
-  console.assert(hasDeveloper, "enabledExtensions should be applied");
   console.log(hasDeveloper
-    ? "✅ enabledExtensions applied (developer present)"
-    : "⚠ enabledExtensions NOT reflected — check goose version");
-  if (!hasDeveloper) process.exitCode = 1;
+    ? "ℹ enabledExtensions honoured by this goose (cgoose does not rely on it)"
+    : "ℹ enabledExtensions ignored by this goose (expected on 1.57)");
 
-  // mcpServers (standard ACP field) is the other channel for stdio extensions.
+  // mcpServers (standard ACP field) is the channel cgoose uses for stdio/http
+  // extensions — this one must actually reach the session.
   const mcpSession = await client.newSession({
     cwd: process.cwd(),
     mcpServers: [

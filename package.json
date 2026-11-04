@@ -7,6 +7,9 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "check": "tsc -p tsconfig.json",
+    "test": "bun scripts/acp-extensions-test.ts && bun scripts/acp-client-offline-test.ts",
+    "test:extensions": "bun scripts/acp-extensions-test.ts",
+    "test:client": "bun scripts/acp-client-offline-test.ts",
     "acp:probe": "bun scripts/acp-probe.ts",
     "acp:smoke": "bun scripts/acp-client-smoke.ts"
   },

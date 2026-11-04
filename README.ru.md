@@ -163,6 +163,15 @@ TUI по-прежнему находит установленные рецепт
 - Показывает set в сводке запуска, если он выбран
 - Запускает `goose session` с `stdio: inherit`, пробрасывает код выхода
 
+### Chat-режим (ACP)
+- `-c` (или `ac`, `nc`, `sc`, `mc`, `wc`) запускает `goose acp`, а диалог рисует сам cgoose
+- Стриминг ответа, thinking-блоки, tool calls и расход токенов/стоимость рендерятся в TUI cgoose
+- Session sets: builtins через `goose acp --with-builtin`, stdio/HTTP-расширения через ACP `mcpServers`, системный промпт через `_goose/unstable/session/system-prompt/set`
+- На goose 1.57 у `goose acp` нет `--no-profile`, поэтому профиль по умолчанию загружается всегда — расширения set'а **добавляются** к нему (в чате выводится предупреждение)
+- Permission-запросы показываются оверлеем SelectList; Esc/Ctrl+C во время хода отменяют его, Esc с пустым вводом выходит
+- Требуется goose ≥ 1.57; иначе cgoose откатывается на классический `goose session`
+- Проверка: `bun run test` (без goose), `bun run acp:probe`, `bun run acp:smoke`
+
 ---
 
 ## Workflow
@@ -213,6 +222,12 @@ TUI по-прежнему находит установленные рецепт
 | `wa` | Auto-resume + force worktree |
 | `ws` | Только сессии + force worktree |
 | `wn` | Новая сессия + force worktree |
+| `c` | **Chat-режим** — полный workflow, затем чат cgoose поверх `goose acp` |
+| `ac` / `ca` | Chat + auto-resume последней сессии |
+| `nc` / `cn` | Chat + новая сессия с последними провайдером/моделью/set'ом |
+| `sc` / `cs` | Chat + только пикер сессий |
+| `mc` | Chat + no worktree |
+| `wc` | Chat + force worktree |
 
 В режимах `a`, `n` или `s` последний использованный **set** также восстанавливается вместе с провайдером и моделью.
 
@@ -225,6 +240,8 @@ cgoose s    # выбрать сессию, затем запуск
 cgoose m    # полный workflow, без worktree
 cgoose w    # полный workflow, принудительный worktree
 cgoose wa   # auto-resume, принудительный worktree
+cgoose c    # полный workflow, затем встроенный чат (goose acp)
+cgoose ac   # чат + resume последней сессии
 ```
 
 ## Скрипты

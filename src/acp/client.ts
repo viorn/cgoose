@@ -102,10 +102,22 @@ export class AcpClient {
     client.child.stdout!.setEncoding("utf-8");
     client.child.stdout!.on("data", (chunk: string) => client.feed(chunk));
     client.child.stderr!.setEncoding("utf-8");
+    // Buffer partial lines: a chunk boundary is not a line boundary.
+    let stderrBuffer = "";
+    const emitStderr = (line: string): void => {
+      if (line.trim() && opts.onStderr) opts.onStderr(line);
+    };
     client.child.stderr!.on("data", (chunk: string) => {
-      for (const line of chunk.split("\n")) {
-        if (line.trim() && opts.onStderr) opts.onStderr(line);
+      stderrBuffer += chunk;
+      let idx: number;
+      while ((idx = stderrBuffer.indexOf("\n")) !== -1) {
+        emitStderr(stderrBuffer.slice(0, idx));
+        stderrBuffer = stderrBuffer.slice(idx + 1);
       }
+    });
+    client.child.stderr!.on("end", () => {
+      if (stderrBuffer) emitStderr(stderrBuffer);
+      stderrBuffer = "";
     });
     client.child.on("exit", (code) => {
       if (opts.onExit) opts.onExit(code);
@@ -114,6 +126,7 @@ export class AcpClient {
     // Fires on spawn failure (e.g. goose not installed) — without this, Node
     // throws an uncaught 'error' event instead of a readable message.
     client.child.on("error", (err) => {
+      if (opts.onExit) opts.onExit(null);
       client.failPending(new Error(`failed to start goose acp: ${err.message}`));
     });
     return client;
@@ -213,9 +226,16 @@ export class AcpClient {
       : { jsonrpc: "2.0", id, result: result ?? {} });
   }
 
-  private send(msg: Record<string, unknown>): void {
-    if (this.exiting) return;
-    this.child.stdin!.write(JSON.stringify(msg) + "\n");
+  private send(msg: Record<string, unknown>): boolean {
+    if (this.exiting) return false;
+    const stdin = this.child.stdin;
+    if (!stdin || !stdin.writable) return false;
+    try {
+      stdin.write(JSON.stringify(msg) + "\n");
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private failPending(error: Error): void {
@@ -229,8 +249,10 @@ export class AcpClient {
   // ─── Public API ────────────────────────────────────────────────────────────
 
   /**
-   * Send a JSON-RPC request. `timeoutMs <= 0` means wait forever — use for
-   * `session/prompt`, which can run for minutes.
+   * Send a JSON-RPC request. `timeoutMs <= 0` means wait forever.
+   *
+   * A timed-out `session/prompt` also sends `session/cancel` — otherwise the
+   * agent keeps working on a request nobody is waiting for.
    */
   request(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
     const id = this.nextId++;
@@ -238,11 +260,19 @@ export class AcpClient {
       const timer = timeoutMs > 0
         ? setTimeout(() => {
             this.pending.delete(id);
+            if (method === "session/prompt") {
+              const sessionId = (params as { sessionId?: string } | undefined)?.sessionId;
+              if (sessionId) this.notify("session/cancel", { sessionId });
+            }
             reject(new Error(`acp request timeout: ${method}`));
           }, timeoutMs)
         : null;
       this.pending.set(id, { resolve, reject, timer });
-      this.send({ jsonrpc: "2.0", id, method, params });
+      if (!this.send({ jsonrpc: "2.0", id, method, params })) {
+        this.pending.delete(id);
+        if (timer) clearTimeout(timer);
+        reject(new Error(`acp transport closed (${method})`));
+      }
     });
   }
 
@@ -275,17 +305,23 @@ export class AcpClient {
   }
 
   async newSession(req: NewSessionRequest): Promise<NewSessionResponse> {
-    return (await this.request("session/new", req, 60_000)) as NewSessionResponse;
+    // MCP servers may need to download packages (npx/uvx) before answering.
+    return (await this.request("session/new", req, 120_000)) as NewSessionResponse;
   }
 
   async loadSession(req: LoadSessionRequest): Promise<void> {
     // Session updates (history replay) arrive via onUpdate while awaiting.
-    await this.request("session/load", req, 60_000);
+    await this.request("session/load", req, 120_000);
   }
 
-  async prompt(sessionId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
+  async prompt(sessionId: string, prompt: ContentBlock[], timeoutMs = 0): Promise<PromptResponse> {
     const req: PromptRequest = { sessionId, prompt };
-    return (await this.request("session/prompt", req, 0)) as PromptResponse;
+    return (await this.request("session/prompt", req, timeoutMs)) as PromptResponse;
+  }
+
+  /** True once the transport cannot deliver anything (exit/stop/spawn error). */
+  get closed(): boolean {
+    return this.exiting || this.child.exitCode !== null || this.child.signalCode !== null;
   }
 
   cancel(sessionId: string): void {
@@ -298,9 +334,24 @@ export class AcpClient {
     this.failPending(new Error("acp client stopped"));
     const child = this.child;
     if (child.exitCode !== null || child.signalCode) return;
-    child.stdin!.end();
-    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    // Register the listener before closing stdin: a process that exits in
+    // between would otherwise leave `await exited` hanging forever.
+    const exited = new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode) resolve();
+      else child.once("exit", () => resolve());
+    });
+    try {
+      child.stdin?.end();
+    } catch {
+      /* already closed */
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }, timeoutMs);
     await exited;
     clearTimeout(timer);
   }

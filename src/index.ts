@@ -379,8 +379,9 @@ async function main() {
   // dashes are stripped so `cgoose -mn` works too.
   const args = process.argv.slice(2).map((a) => a.replace(/^-+/, ""));
 
-  // Detect worktree force flag (w, wa, ws, wn) — overrides CGOOSE_NO_WORKTREE
-  const forceWorktree = args.includes("w") || args.includes("wa") || args.includes("ws") || args.includes("wn");
+  // Detect worktree force flag (w, wa, ws, wn, wc) — overrides CGOOSE_NO_WORKTREE
+  const forceWorktree = args.includes("w") || args.includes("wa") || args.includes("ws")
+    || args.includes("wn") || args.includes("wc");
   if (forceWorktree) {
     process.env.CGOOSE_FORCE_WORKTREE = "1";
     delete process.env.CGOOSE_NO_WORKTREE;
@@ -490,6 +491,10 @@ async function main() {
       log.warn(pc.yellow("No previous session data for this project. Falling back to full workflow."));
     } else {
       isNewSession = true;
+      // Generate the name up front: the worktree directory/branch and the
+      // goose session title must share it, otherwise resume cannot find the
+      // worktree (quick-new used to launch with an auto-named session).
+      sessionName = generateSessionName(sessionPrefix);
       step = "launch";
     }
   }

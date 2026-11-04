@@ -90,7 +90,10 @@ export interface NewSessionRequest {
       sessionTitle?: string;
       /** Requested provider (resolved against goose config). */
       provider?: string;
-      /** Extensions to enable for this session (replaces defaults when set). */
+      /**
+       * Goose-specific extension list. Ignored by goose 1.57 and not sent by
+       * cgoose (extensions go through `mcpServers` + `--with-builtin`).
+       */
       enabledExtensions?: GooseExtension[];
       projectId?: string;
       [key: string]: unknown;
@@ -140,16 +143,20 @@ export interface PromptResponse {
 export interface AgentMessageChunkUpdate {
   sessionUpdate: "agent_message_chunk";
   content: ContentBlock;
+  /** Chunks with the same id belong to one message; a change starts a new one. */
+  messageId?: string;
 }
 
 export interface AgentThoughtChunkUpdate {
   sessionUpdate: "agent_thought_chunk";
   content: ContentBlock;
+  messageId?: string;
 }
 
 export interface UserMessageChunkUpdate {
   sessionUpdate: "user_message_chunk";
   content: ContentBlock;
+  messageId?: string;
 }
 
 export interface ToolCallUpdate {
@@ -191,11 +198,17 @@ export interface SessionInfoUpdate {
   [key: string]: unknown;
 }
 
+/** Cumulative session cost: `amount` in `currency` (ISO 4217 or e.g. "credits"). */
+export interface Cost {
+  amount: number;
+  currency: string;
+}
+
 export interface UsageUpdate {
   sessionUpdate: "usage_update";
   used: number;
   size: number;
-  cost?: unknown;
+  cost?: Cost | null;
   [key: string]: unknown;
 }
 
