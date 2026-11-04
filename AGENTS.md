@@ -102,9 +102,10 @@ JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/p
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
 - Rendering: the chat owns the **alternate screen** — `TuiAltScreen` with an explicit
-  layout root (header pinned, `ScrollView(transcript, { follow: "end", primary: true })`
-  in the middle, composer pinned). Scroll position survives streaming: follow-end turns
-  off when the user scrolls up and resumes at the bottom. `tui.stop()` prints the final
+  layout root (`ScrollView(document, { follow: "end", primary: true })` with the header
+  as the first lines of the document, composer pinned). Scroll position survives
+  streaming: follow-end turns off when the user scrolls up and resumes at the bottom.
+  `tui.stop()` prints the final
   transcript back to the normal screen, so scrollback keeps the conversation.
   `CGOOSE_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
   scrollback, so any repaint — spinner, streamed chunk — pulls the view to the bottom)

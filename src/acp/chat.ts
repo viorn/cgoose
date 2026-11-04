@@ -174,8 +174,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   const terminal = new ProcessTerminal();
   // Chat renders into its own viewport (alternate screen): the transcript
   // scrolls *inside* the TUI — wheel, PgUp/PgDn, Ctrl+Shift+F search — and
-  // streaming updates never drag the view back to the bottom. The header and
-  // the composer stay pinned. On exit pi-tui prints the final transcript to
+  // streaming updates never drag the view back to the bottom. Only the
+  // composer is pinned; the header scrolls with the conversation.
+  // On exit pi-tui prints the final transcript to
   // the normal screen, so the conversation still lands in the scrollback.
   //
   // CGOOSE_CHAT_MAIN_SCREEN=1 restores the inline renderer, where the terminal
@@ -516,18 +517,22 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   const editor = new Editor(tui, editorTheme, { paddingX: 1 });
 
   if (isViewportTUI(tui)) {
-    // Header pinned on top, composer pinned at the bottom, transcript scrolls
-    // in between with `follow: "end"` (auto-follow stops as soon as the user
-    // scrolls up and resumes at the bottom).
-    const header = new VStack([
-      headerLine,
-      ...(setLabel !== undefined ? [new Text(pc.dim(`set: ${setLabel}`), 1, 0)] : []),
-    ]);
+    // The header scrolls with the conversation (it is just the first lines of
+    // the document), the composer stays pinned at the bottom. `follow: "end"`
+    // auto-follows new content until the user scrolls up, and resumes when the
+    // view is back at the bottom.
+    const document = new Container();
+    document.addChild(headerLine);
+    if (setLabel !== undefined) {
+      document.addChild(new Text(pc.dim(`set: ${setLabel}`), 1, 0));
+    }
+    document.addChild(new Spacer());
+    document.addChild(transcript);
+
     const composer = new VStack([loader, new Spacer(), editor, statusLine]);
     tui.setLayoutRoot(new VStack([
-      { component: header, basis: "auto", shrink: 0 },
       {
-        component: new ScrollView(transcript, {
+        component: new ScrollView(document, {
           follow: "end",
           primary: true,
           overscroll: "chain",
