@@ -25,10 +25,18 @@ bun install --frozen-lockfile 2>/dev/null || bun install
 echo "==> Compiling ${OUTFILE}..."
 bun build --compile src/index.ts --outfile "${OUTFILE}"
 
+# A published <asset>.sha256 is what install-release.sh prefers over the digest
+# GitHub reports, and it is what a user verifies by hand; write it next to the
+# binary in the `sha256sum` format so `sha256sum -c` works as well.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "${OUTFILE}" > "${OUTFILE}.sha256"
+fi
+
 echo ""
 echo "  ✓ Done! ./${OUTFILE} is ready"
 printf "  %s\n" "$(file "${OUTFILE}" | sed 's/.*://')"
 printf "  Size: %s\n" "$(du -h "${OUTFILE}" | cut -f1)"
+[ -f "${OUTFILE}.sha256" ] && printf "  %s\n" "$(cat "${OUTFILE}.sha256")"
 echo ""
 echo "  Run: ./${OUTFILE}"
-echo "  For GitHub: upload ${OUTFILE} to a release"
+echo "  For GitHub: upload ${OUTFILE}$([ -f "${OUTFILE}.sha256" ] && echo " and ${OUTFILE}.sha256") to a release"
