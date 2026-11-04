@@ -4,8 +4,10 @@
 Ветка       : main
 HEAD        : d4e82fe  rename: cgoose → rossii — Anser rossii, the smallest goose
 Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoose, редирект работает)
-Релиз       : v3.0.0 (тег запушен, pre-release, asset rossii-3.0.0-linux-x86_64)
+Релиз       : v3.0.0 — опубликован как latest (не pre-release), asset rossii-3.0.0-linux-x86_64
+              sha256 ac0feda18a269f0e…, в заметках — команда установки
               https://github.com/viorn/rossii/releases/tag/v3.0.0
+              Установлено на машину именно из релизного ассета (curl + install), не из build.sh
 Версия      : 3.0.0 (package.json)
 Установлено : ~/.local/bin/rossii ← rossii-3.0.0-linux-x86_64
               sha256 ac0feda18a269f0e… (сборка 2026-11-04 20:53 MSK)
