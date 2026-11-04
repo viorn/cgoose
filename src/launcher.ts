@@ -255,7 +255,12 @@ export function launchGoose(
     // and ignores extension flags, so how the session was originally started wins.
     args.push("session", "--resume", "--history");
     if (sessionName) {
-      args.push("--name", sessionName);
+      // Use --session-id, NOT --name: goose resolves --name through
+      // SessionStorage::list_sessions(), which only returns user+scheduled
+      // sessions — so sessions created in ACP mode ("not found") can't be
+      // resumed that way. --session-id goes straight to get_session(),
+      // which has no session_type filter.
+      args.push("--session-id", sessionName);
     }
     args.push("--provider", providerInfo.name, "--model", model);
     args.push("--system", set?.systemPrompt ?? "");
