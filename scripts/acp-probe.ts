@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * ACP probe — Phase 0 verification for cgoose ACP mode.
+ * ACP probe — Phase 0 verification for rossii ACP mode.
  *
  * Spawns `goose acp` and exercises the protocol end-to-end:
  *   initialize → session/new (_meta: client/sessionTitle) →
@@ -8,7 +8,7 @@
  *   session/load (replay check)
  *
  * Usage: bun scripts/acp-probe.ts [--timeout-ms 120000]
- * Env:   CGOOSE_ACP_BIN (default "goose"), CGOOSE_ACP_ARGS (e.g. "--with-builtin developer")
+ * Env:   ROSSII_ACP_BIN (default "goose"), ROSSII_ACP_ARGS (e.g. "--with-builtin developer")
  */
 
 import { spawn } from "node:child_process";
@@ -17,8 +17,8 @@ import { newSessionMeta } from "../src/acp/session-meta";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const BIN = process.env.CGOOSE_ACP_BIN || "goose";
-const EXTRA_ARGS = (process.env.CGOOSE_ACP_ARGS || "")
+const BIN = process.env.ROSSII_ACP_BIN || "goose";
+const EXTRA_ARGS = (process.env.ROSSII_ACP_ARGS || "")
   .split(" ")
   .filter(Boolean);
 const TIMEOUT_MS = (() => {
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
   try {
     const r = await withDeadline("system-prompt/set", request(
       "_goose/unstable/session/system-prompt/set",
-      { sessionId, mode: "append", key: "cgoose-probe", text: "Always end your replies with the word COCONUT." },
+      { sessionId, mode: "append", key: "rossii-probe", text: "Always end your replies with the word COCONUT." },
     ));
     process.stdout.write(`\n══ system-prompt/set OK: ${JSON.stringify(r)} ══\n`);
   } catch (error) {

@@ -32,9 +32,9 @@ assert.deepEqual(resolveTimeoutMs("   ", 5, "X"), { ms: 5, invalid: null });
 assert.deepEqual(resolveTimeoutMs("1500", 5, "X"), { ms: 1500, invalid: null });
 assert.deepEqual(resolveTimeoutMs("0", 5, "X"), { ms: 0, invalid: null }, "0 disables the guard");
 assert.equal(resolveTimeoutMs("-1", 5, "X").ms, 5, "a negative timeout is rejected");
-const junk = resolveTimeoutMs("5m", 5, "CGOOSE_ACP_IDLE_TIMEOUT_MS");
+const junk = resolveTimeoutMs("5m", 5, "ROSSII_ACP_IDLE_TIMEOUT_MS");
 assert.equal(junk.ms, 5, "junk falls back to the default");
-assert.match(String(junk.invalid), /CGOOSE_ACP_IDLE_TIMEOUT_MS="5m"/, "junk is reported to the user");
+assert.match(String(junk.invalid), /ROSSII_ACP_IDLE_TIMEOUT_MS="5m"/, "junk is reported to the user");
 assert.ok(
   DEFAULT_IDLE_TIMEOUT_MS > 0 && DEFAULT_TURN_TIMEOUT_MS > DEFAULT_IDLE_TIMEOUT_MS,
   "the idle guard must be the tighter of the two",
@@ -124,7 +124,7 @@ process.stdin.on("end", () => process.exit(0));
 `;
 
 function makeFakeGoose(): string {
-  const dir = mkdtempSync(join(tmpdir(), "cgoose-fake-acp-"));
+  const dir = mkdtempSync(join(tmpdir(), "rossii-fake-acp-"));
   const agentPath = join(dir, "agent.mjs");
   const binPath = join(dir, "goose");
   writeFileSync(agentPath, AGENT_SOURCE);
@@ -164,7 +164,7 @@ const metaLine = stderr.find((line) => line.startsWith("NEW_SESSION_META="));
 assert.ok(metaLine, "the fake agent must report the session/new meta");
 assert.deepEqual(
   JSON.parse(metaLine.slice("NEW_SESSION_META=".length)),
-  { client: "cgoose", sessionTitle: "wire-check" },
+  { client: "rossii", sessionTitle: "wire-check" },
 );
 console.log("✅ session/new meta is flat on the wire (client/sessionTitle, no provider)");
 

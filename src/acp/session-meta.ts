@@ -33,7 +33,7 @@ export function newSessionMeta(opts: NewSessionMetaOptions): NewSessionMeta {
   // deepseek/deepseek-v4-flash, the first model in the provider's JSON, while
   // GOOSE_PROVIDER/GOOSE_MODEL alone resolved to exactly the picked pair).
   return {
-    client: opts.client ?? "cgoose",
+    client: opts.client ?? "rossii",
     // Omitted rather than sent as `undefined`: goose treats a null title as
     // empty and an empty extension list as "no extensions at all".
     ...(opts.sessionTitle ? { sessionTitle: opts.sessionTitle } : {}),

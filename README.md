@@ -1,26 +1,31 @@
-# cgoose — an ACP terminal UI for Goose
+# rossii — an ACP terminal UI for Goose
 
-**cgoose** is a full terminal user interface for [Goose](https://github.com/block/goose). It speaks
+**rossii** is a full terminal user interface for [Goose](https://github.com/block/goose). It speaks
 the **Agent Client Protocol (ACP)** to `goose acp` and renders the conversation itself — streaming
 answers, thinking, tool calls, permission prompts, tokens and cost — while keeping the workflow
 around it: per-project memory, session sets, worktrees, provider/model switching and model
 discovery.
 
-It is not a wrapper that types `goose session` for you anymore. The chat *is* cgoose; the classic
-Goose TUI is an opt-in fallback (`CGOOSE_ACP_MODE=classic`).
+It is not a wrapper that types `goose session` for you anymore. The chat *is* rossii; the classic
+Goose TUI is an opt-in fallback (`ROSSII_ACP_MODE=classic`).
 
 > **⚠ Tested only on Linux.** May work on macOS (no `secret-tool`, file-based secrets work). Windows is not supported.
 >
 > Requires a Goose build with the `acp` subcommand — verified on **1.50.0** and **1.57.0**.
 
+> **Renamed in 3.0.0.** The project was called **cgoose** up to 2.4.0 — *Anser rossii*, Ross's goose, is
+> the smallest goose there is (the old name and docs are kept in [`docs/legacy-classic.md`](docs/legacy-classic.md)).
+> Settings are read from `~/.config/rossii`, falling back to the old `~/.config/cgoose`, and the
+> `ROSSII_*` environment variables still honour their `CGOOSE_*` spellings.
+
 ---
 
 ## Demo — the wizard
 
-![cgoose workflow](flow.gif)
+![rossii workflow](flow.gif)
 
 The wizard is still there — it collects the session, set, provider and model — but it now opens
-straight into cgoose's own chat.
+straight into rossii's own chat.
 
 ---
 
@@ -34,18 +39,18 @@ straight into cgoose's own chat.
 
 ---
 
-## Why cgoose?
+## Why rossii?
 
 Goose's CLI works, but every session raises the same questions: which provider did I use in this
 project, with which model, under which name, with which system prompt and extensions? And once the
 session is running, changing any of that means restarting it.
 
-**cgoose remembers** — and lets you change the answer *while the session runs*:
+**rossii remembers** — and lets you change the answer *while the session runs*:
 
 - per-project history of sessions, providers, models and sets;
 - a chat UI built for long turns: streaming, tool calls, permissions, scrollback, watchdogs;
 - live reconfiguration — switch provider, model, session set or session without losing the conversation;
-- the same Goose data (`config.yaml`, `custom_providers/`, `sessions.db`), so `goose` and cgoose see
+- the same Goose data (`config.yaml`, `custom_providers/`, `sessions.db`), so `goose` and rossii see
   the same sessions.
 
 ---
@@ -56,7 +61,7 @@ session is running, changing any of that means restarting it.
 
 ```bash
 bash build.sh
-./cgoose
+./rossii
 ```
 
 Requires **Bun** to build; the resulting binary runs on any Linux x86_64 without Bun.
@@ -65,10 +70,10 @@ Requires **Bun** to build; the resulting binary runs on any Linux x86_64 without
 
 ```bash
 bash install.sh
-cgoose
+rossii
 ```
 
-Installs source + deps to `~/.local/lib/cgoose/` and a launcher to `~/.local/bin/cgoose`
+Installs source + deps to `~/.local/lib/rossii/` and a launcher to `~/.local/bin/rossii`
 (make sure `~/.local/bin` is in `PATH`).
 
 ### Option 3: Run from source (requires Bun)
@@ -82,7 +87,7 @@ bun start
 
 ## The chat
 
-cgoose spawns `goose acp` and drives it as an ACP client. One command resumes a session, picks the
+rossii spawns `goose acp` and drives it as an ACP client. One command resumes a session, picks the
 set/provider/model from the project's history, and keeps everything changeable from inside the chat.
 
 - **Streaming** — assistant text is rendered as it arrives, thinking blocks are shown collapsed,
@@ -91,7 +96,7 @@ set/provider/model from the project's history, and keeps everything changeable f
 - **Its own screen** — the chat owns the alternate screen and scrolls the transcript itself
   (mouse wheel, PgUp/PgDn, Ctrl+Shift+F to search) while the composer stays pinned at the bottom.
   Streaming never yanks the view back. On exit the transcript is printed to the normal screen, so
-  it stays in your scrollback. `CGOOSE_CHAT_MAIN_SCREEN=1` restores the inline renderer.
+  it stays in your scrollback. `ROSSII_CHAT_MAIN_SCREEN=1` restores the inline renderer.
 - **Permissions** — `session/request_permission` requests appear as framed dialogs (queued when
   several tool calls ask at once); Esc or Ctrl+C rejects them. During a turn Esc/Ctrl+C cancels it.
 - **History** — resuming replays the conversation into the chat; sessions are read straight from
@@ -157,7 +162,7 @@ too.
 
 ## Session sets
 
-A **session set** is a YAML file at `~/.config/cgoose/sets/<name>.yaml` that bundles a system
+A **session set** is a YAML file at `~/.config/rossii/sets/<name>.yaml` that bundles a system
 prompt and the extensions a session should have:
 
 ```yaml
@@ -181,7 +186,7 @@ stdioExtensions: ["mcpls --trust-project-config"]     # ad-hoc stdio commands
 
 | Choice | Result |
 |--------|--------|
-| **None** | A session with no extensions at all (`--no-profile` in classic mode, an empty `enabledExtensions` list in chat mode). Some Goose builds add their own `developer`; cgoose tolerates it and never adds or removes it. |
+| **None** | A session with no extensions at all (`--no-profile` in classic mode, an empty `enabledExtensions` list in chat mode). Some Goose builds add their own `developer`; rossii tolerates it and never adds or removes it. |
 | **Default** | Leave the profile alone — every extension enabled in `~/.config/goose/config.yaml` loads. |
 | **&lt;set&gt;** | Exactly what the set lists, nothing else. |
 
@@ -192,7 +197,7 @@ change — there is no per-project snapshot.
 
 **Why not recipes?** Recipes run through `goose run --recipe`, which creates a one-shot session with
 no resume. Installed recipes are still discovered (`goose recipe list --format json`) and shown in
-the wizard, but a set is what cgoose launches.
+the wizard, but a set is what rossii launches.
 
 ---
 
@@ -231,12 +236,12 @@ the quick modes and the live switcher reuse the same history.
 opens immediately. In classic mode the "Launch Goose now?" prompt stays.
 
 ```bash
-cgoose a            # resume the last session here, chat opens right away
-cgoose n            # new session, chat opens right away
-cgoose s            # pick a session, then launch
-cgoose wa           # auto-resume with a git worktree
+rossii a            # resume the last session here, chat opens right away
+rossii n            # new session, chat opens right away
+rossii s            # pick a session, then launch
+rossii wa           # auto-resume with a git worktree
 
-CGOOSE_ACP_MODE=classic cgoose n   # hand the terminal to the classic `goose session` TUI
+ROSSII_ACP_MODE=classic rossii n   # hand the terminal to the classic `goose session` TUI
 ```
 
 ---
@@ -266,15 +271,15 @@ New sessions can run in a dedicated worktree at `<repo>/.worktree/<name>` on a m
 - deleting a session removes the worktree and the branch;
 - stale registrations are pruned automatically;
 - disabled outside a git repo, enabled per run with `w`/`wa`/`ws`/`wn`, or permanently with
-  `{ "default_mode": "worktree" }` in `~/.config/cgoose/config.json`.
+  `{ "default_mode": "worktree" }` in `~/.config/rossii/config.json`.
 
 ---
 
 ## Requirements and compatibility
 
-- **Goose** with the `acp` subcommand. Without it, cgoose prints a warning and falls back to the
+- **Goose** with the `acp` subcommand. Without it, rossii prints a warning and falls back to the
   classic `goose session` TUI.
-- The `_goose/unstable/*` requests cgoose uses (system prompt, extension add/remove/list, rename)
+- The `_goose/unstable/*` requests rossii uses (system prompt, extension add/remove/list, rename)
   degrade into chat warnings on builds that lack them, so an older Goose still works with the
   features it has.
 - **Bun** ≥ 1.x to run from source or build the binary.
@@ -286,21 +291,21 @@ New sessions can run in a dedicated worktree at `<repo>/.worktree/<name>` on a m
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `CGOOSE_ACP_MODE` | `acp` | `classic` hands the terminal to `goose session` instead of cgoose's chat |
-| `CGOOSE_ACP_IDLE_TIMEOUT_MS` | `300000` | cancel a turn when the agent sends nothing for this long (`0` disables) |
-| `CGOOSE_ACP_PROMPT_TIMEOUT_MS` | `14400000` | absolute cap on a single turn (`0` disables) |
-| `CGOOSE_CHAT_MAIN_SCREEN` | unset | `1` renders the chat inline instead of on the alternate screen |
-| `CGOOSE_NO_WORKTREE` | set by default | `1` skips worktree creation |
-| `CGOOSE_FORCE_WORKTREE` | unset | `1` forces worktrees (overrides the above) |
-| `CGOOSE_DEBUG` | unset | `1` echoes `goose acp` stderr and the launch command |
-| `GOOSE_PATH_ROOT` | `~/.local/share/goose` | where cgoose looks for `sessions/sessions.db` (Goose honours the same variable) |
+| `ROSSII_ACP_MODE` | `acp` | `classic` hands the terminal to `goose session` instead of rossii's chat |
+| `ROSSII_ACP_IDLE_TIMEOUT_MS` | `300000` | cancel a turn when the agent sends nothing for this long (`0` disables) |
+| `ROSSII_ACP_PROMPT_TIMEOUT_MS` | `14400000` | absolute cap on a single turn (`0` disables) |
+| `ROSSII_CHAT_MAIN_SCREEN` | unset | `1` renders the chat inline instead of on the alternate screen |
+| `ROSSII_NO_WORKTREE` | set by default | `1` skips worktree creation |
+| `ROSSII_FORCE_WORKTREE` | unset | `1` forces worktrees (overrides the above) |
+| `ROSSII_DEBUG` | unset | `1` echoes `goose acp` stderr and the launch command |
+| `GOOSE_PATH_ROOT` | `~/.local/share/goose` | where rossii looks for `sessions/sessions.db` (Goose honours the same variable) |
 
 ---
 
 ## How it works
 
 ```
-cgoose (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
+rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
         │                                           │
         │  initialize / session/new | session/load   │
         │  session/prompt ⇄ session/update           │
@@ -335,8 +340,8 @@ The probe scripts under `scripts/acp-*-probe.ts` (config options, config surface
 
 | Script | What it does |
 |--------|--------------|
-| `build.sh` | compiles a standalone binary (`./cgoose`) with the Bun runtime embedded |
-| `install.sh` | installs source to `~/.local/lib/cgoose/` and a launcher to `~/.local/bin/cgoose` |
+| `build.sh` | compiles a standalone binary (`./rossii`) with the Bun runtime embedded |
+| `install.sh` | installs source to `~/.local/lib/rossii/` and a launcher to `~/.local/bin/rossii` |
 
 Two UI toolkits meet here: the chat renders with [pi-tui](https://github.com/earendil-works/pi-tui),
 the setup wizard still uses [Clack](https://github.com/natemoo-re/clack) prompts.
@@ -351,23 +356,23 @@ the setup wizard still uses [Clack](https://github.com/natemoo-re/clack) prompts
 | Custom providers | `~/.config/goose/custom_providers/*.json` |
 | Secrets | system keyring · `~/.config/goose/secrets.yaml` · environment |
 | Sessions (both UIs) | `~/.local/share/goose/sessions/sessions.db` |
-| Session sets | `~/.config/cgoose/sets/*.yaml` (legacy `.json` still read) |
-| Per-project memory | `~/.config/cgoose/projects/<dir>-<hash>.json` |
-| cgoose config | `~/.config/cgoose/config.json` |
+| Session sets | `~/.config/rossii/sets/*.yaml` (legacy `.json` still read) |
+| Per-project memory | `~/.config/rossii/projects/<dir>-<hash>.json` |
+| rossii config | `~/.config/rossii/config.json` |
 | Git worktrees | `<repo>/.worktree/<name>` |
 
 ---
 
 ## Legacy: before the ACP renderer
 
-Up to v2.2 cgoose was a Clack wizard that prepared the flags and launched `goose session` — the
+Up to v2.2 rossii was a Clack wizard that prepared the flags and launched `goose session` — the
 setup workflow, with Goose's own TUI doing the talking. That description is kept for history,
 including a comparison of what it could and could not do:
 
 - [docs/legacy-classic.md](docs/legacy-classic.md) — archived README (English)
 - [docs/legacy-classic.ru.md](docs/legacy-classic.ru.md) — архивный README (по-русски)
 
-The classic path still exists in the code: `CGOOSE_ACP_MODE=classic` hands the terminal to
+The classic path still exists in the code: `ROSSII_ACP_MODE=classic` hands the terminal to
 `goose session` with the same session sets, worktrees and per-project history.
 
 ---

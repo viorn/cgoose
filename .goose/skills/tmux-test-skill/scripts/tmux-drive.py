@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive a terminal TUI (cgoose, goose, any curses app) inside tmux.
+"""Drive a terminal TUI (rossii, goose, any curses app) inside tmux.
 
 Why tmux and not a raw pty: pi-tui repaints the whole screen, so raw pty output
 is a soup of escape sequences. `tmux capture-pane` gives the visible screen.
@@ -16,7 +16,7 @@ Usage:
 sends anything else as literal text.
 
 Typical session:
-  tmux-drive.py start --cwd /tmp/probe --cmd 'CGOOSE_NO_WORKTREE=1 bun /path/src/index.ts'
+  tmux-drive.py start --cwd /tmp/probe --cmd 'ROSSII_NO_WORKTREE=1 bun /path/src/index.ts'
   tmux-drive.py wait --pattern 'Session set'
   tmux-drive.py type probe          # filter the list instead of counting arrows
   tmux-drive.py send Enter
@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 
-DEFAULT_NAME = "cgoose-test"
+DEFAULT_NAME = "rossii-test"
 KEY_NAMES = {
     "Enter", "Escape", "Esc", "Space", "Tab", "BTab", "BSpace", "Up", "Down",
     "Left", "Right", "Home", "End", "PPage", "NPage", "DC", "C-c", "C-d",

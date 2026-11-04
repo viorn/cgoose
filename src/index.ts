@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * cgoose — TUI for Goose AI Sessions
+ * rossii — an ACP terminal UI for Goose
  *
  * CLI flags (single-letter, like tmux):
  *   e    Edit mode: choose a session → choose a user message → rollback
  *        (permanently delete messages from that point forward).
  *   m    No-worktree: run interactively without git worktree isolation
- *   w    Force worktree: enable git worktree isolation (overrides CGOOSE_NO_WORKTREE=1)
+ *   w    Force worktree: enable git worktree isolation (overrides ROSSII_NO_WORKTREE=1)
  *   a    Auto-resume: quick resume to last session in this directory
  *   n    New session: skip pickers, start new with last provider/model
  *        (in chat mode a/n open the chat immediately — no summary, no confirm;
@@ -21,8 +21,8 @@
  *   me   Edit mode without git worktree isolation
  *   we   Edit mode with worktree forced on
  *
- * Chat (ACP) mode is the default: cgoose renders the dialog itself on top of
- * `goose acp`. Set CGOOSE_ACP_MODE=classic to hand the terminal to the classic
+ * Chat (ACP) mode is the default: rossii renders the dialog itself on top of
+ * `goose acp`. Set ROSSII_ACP_MODE=classic to hand the terminal to the classic
  * `goose session` TUI instead. The old chat letters (c, ac/ca, nc/cn, sc/cs,
  * mc, wc) are no longer flags; the pairs still work as aliases of a/n/s/m/w.
  *
@@ -36,8 +36,8 @@ import {
 } from "@clack/prompts";
 import pc from "picocolors";
 
-import { getCurrentDirName, generateSessionName, formatNumber } from "./utils";
-import { readCgooseConfig, listSessionSets, saveSessionSet, deleteSessionSet, type SessionSet } from "./cgoose-config";
+import { env, setEnv, getCurrentDirName, generateSessionName, formatNumber } from "./utils";
+import { readRossiiConfig, listSessionSets, saveSessionSet, deleteSessionSet, type SessionSet } from "./rossii-config";
 import { getConfigProviders, getDiscoveredCustomProviders, loadConfigEnvVars, isModelInCustomProviderJson, addModelToCustomProviderJson, getCustomProviderModels, type ProviderInfo } from "./config";
 import { createCustomProviderWizard, type CreatedProvider } from "./provider-creator";
 import { readProjectMeta, getWorktreeMappings, removeWorktreeMapping } from "./project";
@@ -55,19 +55,19 @@ type Step = "session" | "session_name" | "set" | "provider" | "model" | "launch"
 // ─── Renderer selection ──────────────────────────────────────────────────────
 
 /**
- * ACP (chat) mode is the default: cgoose spawns `goose acp` and draws the
- * dialog itself. `CGOOSE_ACP_MODE=classic` switches to the classic
+ * ACP (chat) mode is the default: rossii spawns `goose acp` and draws the
+ * dialog itself. `ROSSII_ACP_MODE=classic` switches to the classic
  * `goose session` TUI; `acp`/`chat` (also 1/on/true) opt in explicitly.
  * An unrecognised value warns and keeps the default instead of silently
  * changing how the session is rendered.
  */
 function resolveChatMode(): boolean {
-  const raw = (process.env.CGOOSE_ACP_MODE ?? "").trim().toLowerCase();
+  const raw = (env("ACP_MODE") ?? "").trim().toLowerCase();
   if (raw === "") return true;
   if (["acp", "chat", "1", "on", "true", "yes"].includes(raw)) return true;
   if (["classic", "session", "0", "off", "false", "no"].includes(raw)) return false;
   log.warn(pc.yellow(
-    `⚠ CGOOSE_ACP_MODE="${raw}" is not recognised — using ACP (chat) mode. Set "classic" for the goose session TUI.`,
+    `⚠ ROSSII_ACP_MODE="${raw}" is not recognised — using ACP (chat) mode. Set "classic" for the goose session TUI.`,
   ));
   return true;
 }
@@ -377,7 +377,7 @@ async function manageSessionSets(): Promise<void> {
 
 async function main() {
   console.clear();
-  intro(`${pc.bgCyan(pc.black(" cgoose "))} ${pc.dim("— TUI for Goose AI Sessions")}`);
+  intro(`${pc.bgCyan(pc.black(" rossii "))} ${pc.dim("— an ACP terminal UI for Goose")}`);
 
   const projectName = getCurrentDirName();
   const sessionPrefix = projectName;
@@ -412,20 +412,20 @@ async function main() {
   let quickLaunch = false;
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
-  // Flags are single-letter, tmux-style: `cgoose mn`, `cgoose w`. Leading
-  // dashes are stripped so `cgoose -mn` works too. Legacy chat pairs collapse
+  // Flags are single-letter, tmux-style: `rossii mn`, `rossii w`. Leading
+  // dashes are stripped so `rossii -mn` works too. Legacy chat pairs collapse
   // to their base mode (mc→m, ac→a, …) — chat itself is the default now.
   const args = process.argv.slice(2)
     .map((a) => a.replace(/^-+/, ""))
     .map((a) => LEGACY_CHAT_ALIASES[a] ?? a)
     .filter(Boolean);
 
-  // Detect worktree force flag (w, wa, ws, wn) — overrides CGOOSE_NO_WORKTREE
+  // Detect worktree force flag (w, wa, ws, wn) — overrides ROSSII_NO_WORKTREE
   const forceWorktree = args.includes("w") || args.includes("wa") || args.includes("ws")
     || args.includes("wn");
   if (forceWorktree) {
-    process.env.CGOOSE_FORCE_WORKTREE = "1";
-    delete process.env.CGOOSE_NO_WORKTREE;
+    setEnv("FORCE_WORKTREE", "1");
+    setEnv("NO_WORKTREE", undefined);
   }
 
   // Detect "fork" mode (e) — edit/fork existing sessions
@@ -437,14 +437,14 @@ async function main() {
   // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
   let noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
   if (noWorktree) {
-    process.env.CGOOSE_NO_WORKTREE = "1";
+    setEnv("NO_WORKTREE", "1");
   }
 
-  // If no explicit CLI override, check cgoose config for default mode
+  // If no explicit CLI override, check rossii config for default mode
   if (!forceWorktree && !noWorktree) {
-    const cgooseConfig = readCgooseConfig();
-    if (cgooseConfig.default_mode === "no-worktree") {
-      process.env.CGOOSE_NO_WORKTREE = "1";
+    const rossiiConfig = readRossiiConfig();
+    if (rossiiConfig.default_mode === "no-worktree") {
+      setEnv("NO_WORKTREE", "1");
       noWorktree = true;
     }
   }
@@ -489,7 +489,7 @@ async function main() {
     } else {
       const allSessions = getAllSessions();
       const cwd = resolve(".");
-      // Also consider sessions from git worktrees managed by cgoose
+      // Also consider sessions from git worktrees managed by rossii
       const worktreeDirs = noWorktree ? [] : getRepoWorktreePaths();
       const relevantDirs = [cwd, ...worktreeDirs];
       const dirSessions = allSessions.filter((s) => relevantDirs.includes(s.working_dir));
@@ -1197,7 +1197,7 @@ async function main() {
           sessionSet: selectedSet,
         };
 
-        // `cgoose a` / `cgoose n`: the pickers were skipped on purpose, so in
+        // `rossii a` / `rossii n`: the pickers were skipped on purpose, so in
         // chat mode the chat opens right away — no summary, no confirmation.
         if (quickLaunch && isChatMode) {
           await launchGooseAcp(chatLaunchOptions);

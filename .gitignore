@@ -1,6 +1,8 @@
 node_modules/
 bun.lock
 .goose-tui.json
+rossii
+rossii-*-linux-*
 cgoose
 cgoose-*-linux-*
 ${OUTFILE}

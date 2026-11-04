@@ -6,15 +6,15 @@
  * No `session/prompt`, so no LLM tokens are spent.
  *
  * Usage: bun scripts/acp-fork-probe.ts
- * Env:   CGOOSE_ACP_BIN (default "goose"), CGOOSE_ACP_ARGS
+ * Env:   ROSSII_ACP_BIN (default "goose"), ROSSII_ACP_ARGS
  */
 
 import { spawn } from "node:child_process";
 
 import { newSessionMeta } from "../src/acp/session-meta";
 
-const BIN = process.env.CGOOSE_ACP_BIN || "goose";
-const EXTRA_ARGS = (process.env.CGOOSE_ACP_ARGS || "").split(" ").filter(Boolean);
+const BIN = process.env.ROSSII_ACP_BIN || "goose";
+const EXTRA_ARGS = (process.env.ROSSII_ACP_ARGS || "").split(" ").filter(Boolean);
 const TIMEOUT_MS = 120_000;
 
 let nextId = 1;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Unit tests for the `session/new` meta cgoose sends (src/acp/session-meta.ts).
+ * Unit tests for the `session/new` meta rossii sends (src/acp/session-meta.ts).
  *
  * These pin the deliberate *omissions* as much as the keys: a nested
  * `_meta.goose` object is invisible to goose, and `_meta.provider` silently
@@ -18,7 +18,7 @@ const checks: Check[] = [
   ["keys are top-level, never wrapped in `goose`", () => {
     const meta = newSessionMeta({ sessionTitle: "my-session" });
     assert.equal(meta.goose, undefined, "a `goose` wrapper is invisible to the agent");
-    assert.equal(meta.client, "cgoose", "`client` is what stores SessionType::User");
+    assert.equal(meta.client, "rossii", "`client` is what stores SessionType::User");
     assert.equal(meta.sessionTitle, "my-session");
   }],
 
@@ -32,7 +32,7 @@ const checks: Check[] = [
   }],
 
   ["optional keys are omitted, not sent as null/undefined", () => {
-    assert.deepEqual(newSessionMeta({}), { client: "cgoose" });
+    assert.deepEqual(newSessionMeta({}), { client: "rossii" });
     assert.deepEqual(Object.keys(newSessionMeta({})), ["client"]);
     assert.equal(JSON.parse(JSON.stringify(newSessionMeta({}))).sessionTitle, undefined);
   }],

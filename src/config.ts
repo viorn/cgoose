@@ -161,7 +161,7 @@ export function getConfigProviders(): ProviderInfo[] {
 
 /**
  * Discover custom providers from JSON files that aren't referenced in config.yaml.
- * These are providers created via `goose configure` or via cgoose's own creator.
+ * These are providers created via `goose configure` or via rossii's own creator.
  * Returns ProviderInfo entries suitable for listing in the provider picker.
  */
 export function getDiscoveredCustomProviders(yamlProviders: ProviderInfo[]): ProviderInfo[] {

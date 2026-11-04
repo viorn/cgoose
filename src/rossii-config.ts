@@ -1,13 +1,13 @@
 /**
- * cgoose configuration file (~/.config/cgoose/config.json)
+ * rossii configuration file (~/.config/rossii/config.json)
  *
  * Currently supported settings:
  *   default_mode — "no-worktree" (default) | "worktree"
  *
  * Session sets are stored as individual files in:
- *   ~/.config/cgoose/sets/<name>.json   (legacy)
- *   ~/.config/cgoose/sets/<name>.yaml   (preferred)
- *   ~/.config/cgoose/sets/<name>.yml    (alt)
+ *   ~/.config/rossii/sets/<name>.json   (legacy)
+ *   ~/.config/rossii/sets/<name>.yaml   (preferred)
+ *   ~/.config/rossii/sets/<name>.yml    (alt)
  *
  * Reading supports all three formats; the TUI wizard saves as YAML.
  */
@@ -16,12 +16,27 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, unlink
 import { join, parse } from "node:path";
 import { homedir } from "node:os";
 import { load as yamlLoad, dump as yamlDump } from "js-yaml";
+import { env } from "./utils";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
-const CGOOSE_CONFIG_DIR = join(homedir(), ".config", "cgoose");
-const CGOOSE_CONFIG_PATH = join(CGOOSE_CONFIG_DIR, "config.json");
-const CGOOSE_SETS_DIR = join(CGOOSE_CONFIG_DIR, "sets");
+/**
+ * Where settings live: `~/.config/rossii` — or the pre-3.0 `~/.config/cgoose`,
+ * which is still read when the new directory does not exist yet, so an existing
+ * setup (sets, per-project history, config.json) keeps working after the rename.
+ * `ROSSII_CONFIG_DIR` (or the legacy `CGOOSE_CONFIG_DIR`) wins over both.
+ */
+function resolveConfigDir(): string {
+  const override = env("CONFIG_DIR");
+  if (override) return override;
+  const current = join(homedir(), ".config", "rossii");
+  const legacy = join(homedir(), ".config", "cgoose");
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
+const ROSSII_CONFIG_DIR = resolveConfigDir();
+const ROSSII_CONFIG_PATH = join(ROSSII_CONFIG_DIR, "config.json");
+const ROSSII_SETS_DIR = join(ROSSII_CONFIG_DIR, "sets");
 
 /** Supported file extensions for session set files (ordered by preference) */
 const SET_EXTENSIONS = [".yaml", ".yml", ".json"] as const;
@@ -35,7 +50,7 @@ export type DefaultMode = "worktree" | "no-worktree";
  * Used as a lightweight alternative to Goose recipes, always launched
  * via `goose session` (never `goose run`).
  *
- * Stored as ~/.config/cgoose/sets/<name>.yaml (or .json for legacy sets)
+ * Stored as ~/.config/rossii/sets/<name>.yaml (or .json for legacy sets)
  */
 export interface SessionSet {
   /** Unique name/slug (also used as filename) */
@@ -61,26 +76,26 @@ export interface SessionSet {
   stdioExtensions?: string[];
 }
 
-export interface CgooseConfig {
+export interface RossiiConfig {
   /** Default worktree mode for new sessions */
   default_mode: DefaultMode;
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_CONFIG: CgooseConfig = {
+const DEFAULT_CONFIG: RossiiConfig = {
   default_mode: "no-worktree",
 };
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
-/** Read cgoose configuration, returns defaults if file doesn't exist */
-export function readCgooseConfig(): CgooseConfig {
-  if (!existsSync(CGOOSE_CONFIG_PATH)) {
+/** Read rossii configuration, returns defaults if file doesn't exist */
+export function readRossiiConfig(): RossiiConfig {
+  if (!existsSync(ROSSII_CONFIG_PATH)) {
     return { ...DEFAULT_CONFIG };
   }
   try {
-    const raw = JSON.parse(readFileSync(CGOOSE_CONFIG_PATH, "utf-8"));
+    const raw = JSON.parse(readFileSync(ROSSII_CONFIG_PATH, "utf-8"));
     return {
       default_mode: raw.default_mode === "no-worktree" ? "no-worktree" : "worktree",
     };
@@ -92,20 +107,20 @@ export function readCgooseConfig(): CgooseConfig {
 
 // ─── Write ────────────────────────────────────────────────────────────────────
 
-/** Write cgoose configuration, creating parent directories if needed */
-export function writeCgooseConfig(config: CgooseConfig): void {
-  if (!existsSync(CGOOSE_CONFIG_DIR)) {
-    mkdirSync(CGOOSE_CONFIG_DIR, { recursive: true });
+/** Write rossii configuration, creating parent directories if needed */
+export function writeRossiiConfig(config: RossiiConfig): void {
+  if (!existsSync(ROSSII_CONFIG_DIR)) {
+    mkdirSync(ROSSII_CONFIG_DIR, { recursive: true });
   }
-  writeFileSync(CGOOSE_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
+  writeFileSync(ROSSII_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
-// ─── Session Set Management (stored as ~/.config/cgoose/sets/<name>.{yaml,yml,json}) ────
+// ─── Session Set Management (stored as ~/.config/rossii/sets/<name>.{yaml,yml,json}) ────
 
 /** Ensure the sets directory exists */
 function ensureSetsDir(): void {
-  if (!existsSync(CGOOSE_SETS_DIR)) {
-    mkdirSync(CGOOSE_SETS_DIR, { recursive: true });
+  if (!existsSync(ROSSII_SETS_DIR)) {
+    mkdirSync(ROSSII_SETS_DIR, { recursive: true });
   }
 }
 
@@ -115,7 +130,7 @@ function ensureSetsDir(): void {
  */
 function getSetFilePath(name: string): { path: string; ext: string } | undefined {
   for (const ext of SET_EXTENSIONS) {
-    const filePath = join(CGOOSE_SETS_DIR, `${name}${ext}`);
+    const filePath = join(ROSSII_SETS_DIR, `${name}${ext}`);
     if (existsSync(filePath)) {
       return { path: filePath, ext };
     }
@@ -168,14 +183,14 @@ function readSetFile(filePath: string): SessionSet | undefined {
 /** Read all session sets from the sets directory (supports .json, .yaml, .yml) */
 export function listSessionSets(): Record<string, SessionSet> {
   const sets: Record<string, SessionSet> = {};
-  if (!existsSync(CGOOSE_SETS_DIR)) return sets;
+  if (!existsSync(ROSSII_SETS_DIR)) return sets;
 
-  for (const file of readdirSync(CGOOSE_SETS_DIR)) {
+  for (const file of readdirSync(ROSSII_SETS_DIR)) {
     const ext = parse(file).ext.toLowerCase();
     if (!(SET_EXTENSIONS as readonly string[]).includes(ext)) continue;
 
     try {
-      const data = readSetFile(join(CGOOSE_SETS_DIR, file));
+      const data = readSetFile(join(ROSSII_SETS_DIR, file));
       if (data) {
         sets[data.name] = data;
       }
@@ -196,7 +211,7 @@ export function getSessionSet(name: string): SessionSet | undefined {
 /** Create or update a session set. Saves as YAML (preferred format). */
 export function saveSessionSet(set: SessionSet): void {
   ensureSetsDir();
-  const filePath = join(CGOOSE_SETS_DIR, `${set.name}.yaml`);
+  const filePath = join(ROSSII_SETS_DIR, `${set.name}.yaml`);
 
   // YAML format mirrors the JSON shape but is more human-friendly
   const yamlObj: Record<string, any> = {
@@ -229,7 +244,7 @@ export function deleteSessionSet(name: string): boolean {
     // Also clean up any other extension that might exist for the same name
     for (const ext of SET_EXTENSIONS) {
       if (ext === found.ext) continue;
-      const altPath = join(CGOOSE_SETS_DIR, `${name}${ext}`);
+      const altPath = join(ROSSII_SETS_DIR, `${name}${ext}`);
       if (existsSync(altPath)) {
         try { unlinkSync(altPath); } catch { /* best-effort */ }
       }

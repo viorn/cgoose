@@ -34,7 +34,7 @@ export interface GooseSession {
 // ─── List sessions ───────────────────────────────────────────────────────────
 
 /**
- * Session types cgoose shows in the picker.
+ * Session types rossii shows in the picker.
  *
  * `goose session list` only returns `user` + `scheduled` sessions
  * (see SessionStorage::list_sessions in goose). Sessions created through

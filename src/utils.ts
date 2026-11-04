@@ -1,8 +1,38 @@
 /**
- * Utility functions for cgoose
+ * Utility functions for rossii
  */
 
 import { basename, resolve } from "node:path";
+
+// ─── Environment ─────────────────────────────────────────────────────────────
+
+/**
+ * Read a `ROSSII_*` setting, falling back to the pre-rename `CGOOSE_*` spelling.
+ *
+ * The project was called cgoose until 3.0.0, and shell profiles, recipes and CI
+ * files still export the old names. Honouring both means the rename does not
+ * silently switch a watchdog off (a malformed timeout warns, but an *ignored*
+ * variable is invisible).
+ */
+export function env(name: string): string | undefined {
+  return process.env[`ROSSII_${name}`] ?? process.env[`CGOOSE_${name}`];
+}
+
+/** True when the setting is present under either spelling. */
+export function hasEnv(name: string): boolean {
+  return env(name) !== undefined;
+}
+
+/** Set a setting under the new spelling and drop the legacy one. */
+export function setEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[`ROSSII_${name}`];
+    delete process.env[`CGOOSE_${name}`];
+  } else {
+    process.env[`ROSSII_${name}`] = value;
+    delete process.env[`CGOOSE_${name}`];
+  }
+}
 
 export function getCurrentDirName(): string {
   return basename(resolve("."));

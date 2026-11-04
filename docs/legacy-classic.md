@@ -1,7 +1,8 @@
 > **Archived: cgoose before the ACP renderer (v2.2 and earlier).**
 > Here cgoose is a Clack wizard that launches `goose session`. Since v2.3 the default is
 > cgoose's own ACP chat UI — see [README.md](../README.md).
-> Kept as history: where the project started.
+> Kept as history: where the project started. The name `cgoose` itself was dropped in
+> 3.0.0 — the project is now [rossii](https://github.com/viorn/rossii).
 
 # cgoose — TUI for Goose AI Sessions
 

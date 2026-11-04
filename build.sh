@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# build.sh — Compile cgoose into a standalone binary for GitHub Releases
+# build.sh — Compile rossii into a standalone binary for GitHub Releases
 #
-# Produces a named binary: cgoose-<version>-<os>-<arch>
-# e.g. cgoose-1.0.0-linux-x86_64
+# Produces a named binary: rossii-<version>-<os>-<arch>
+# e.g. rossii-1.0.0-linux-x86_64
 #
 # Requires: bun (https://bun.sh)
 #
@@ -17,7 +17,7 @@ cd "$SCRIPT_DIR"
 VERSION="$(grep '"version"' package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
 OS="linux"
 ARCH="x86_64"
-OUTFILE="cgoose-${VERSION}-${OS}-${ARCH}"
+OUTFILE="rossii-${VERSION}-${OS}-${ARCH}"
 
 echo "==> Installing dependencies..."
 bun install --frozen-lockfile 2>/dev/null || bun install

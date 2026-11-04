@@ -1,22 +1,28 @@
-# cgoose — Agent Context
+# rossii — Agent Context
 
 > **⚠ Tested only on Linux.** May work on macOS. Windows is not supported.
 
+> **History:** the project was called **cgoose** until 3.0.0 (repo: `viorn/cgoose` → `viorn/rossii`).
+> The rename is deliberately backward compatible — `ROSSII_*` settings fall back to `CGOOSE_*`
+> (`env()` in `src/utils.ts`), settings are read from `~/.config/rossii` or the old
+> `~/.config/cgoose` when the new one is absent, and a session's system prompt stored under the
+> legacy `cgoose` key is cleared on apply (`applySystemPrompt()` in `src/acp/chat.ts`).
+
 ## Overview
 
-cgoose is a TUI wrapper around `goose session` CLI. It launches Goose — it does not replace it.
+rossii is a TUI wrapper around `goose session` CLI. It launches Goose — it does not replace it.
 
 ## Key facts for agents
 
-- Lives in the user's project directory, remembers settings **per directory** (`~/.config/cgoose/projects/<dir>-<hash>.json`)
+- Lives in the user's project directory, remembers settings **per directory** (`~/.config/rossii/projects/<dir>-<hash>.json`)
 - Reads `~/.config/goose/config.yaml` for enabled providers
 - Reads `~/.config/goose/custom_providers/*.json` for custom provider definitions (engine, baseUrl, authToken)
-- **Session sets** (`~/.config/cgoose/sets/<name>.json`) replace recipes as the primary way to bundle a system prompt + builtin extensions. Recipes are still discovered via `goose recipe list --format json` but cgoose launches via `goose acp` (chat mode, default) or `goose session` (`CGOOSE_ACP_MODE=classic`), never `goose run --recipe`
+- **Session sets** (`~/.config/rossii/sets/<name>.json`) replace recipes as the primary way to bundle a system prompt + builtin extensions. Recipes are still discovered via `goose recipe list --format json` but rossii launches via `goose acp` (chat mode, default) or `goose session` (`ROSSII_ACP_MODE=classic`), never `goose run --recipe`
 - Set history tracked per-project (like provider/model history), last used shown at top
 - The selected **set is the source of truth** for the system prompt: on resume the *current* set's prompt is applied, and **None** explicitly clears any stored prompt via `--system ""` (Goose ≥1.55 persists `--system` in the session DB, so omitting the flag would restore the old prompt instead of clearing it)
 - On new session, set's system prompt is passed via `--system`, extensions via `--with-builtin` / `--with-extension` / `--with-streamable-http-extension` + `--no-profile`
 - Secrets resolved from: env vars → system keyring → `~/.config/goose/secrets.yaml` → JSON config files
-- Config file: `~/.config/cgoose/config.json` — supports `default_mode` (`"worktree"` or `"no-worktree"`)
+- Config file: `~/.config/rossii/config.json` — supports `default_mode` (`"worktree"` or `"no-worktree"`)
 
 ## Wizard Flow (6 steps)
 
@@ -31,7 +37,7 @@ The TUI wizard has 6 steps, each with `initialValue` set to the last-used select
 
 **Pressing Enter on every step = resume with identical set/provider/model as last session.**
 
-Quick modes skip the wizard: `cgoose a` (last session in this directory) and `cgoose n`
+Quick modes skip the wizard: `rossii a` (last session in this directory) and `rossii n`
 (new session) go straight to step 6, and in **chat mode they skip the confirmation too** —
 the chat opens immediately (`quickLaunch` in `src/index.ts`). Classic mode still asks.
 
@@ -39,7 +45,7 @@ If no project meta exists yet, first option is selected (None → first provider
 
 ## Session Sets
 
-A session set is a YAML file at `~/.config/cgoose/sets/<name>.yaml` (legacy `.json` is still read):
+A session set is a YAML file at `~/.config/rossii/sets/<name>.yaml` (legacy `.json` is still read):
 
 ```yaml
 title: My Set
@@ -58,13 +64,13 @@ stdioExtensions: ["mcpls --trust-project-config"]   # raw --with-extension comma
 - Chat mode has no `--no-profile` flag, but `_meta.enabledExtensions` (typed `GooseExtension[]`)
   **replaces** the profile's list, so the same semantics hold; an empty array means "no extensions"
   (goose keeps its implicit `developer`). See the chat-mode section below
-- Created/managed via the TUI: **Set → ⚙️ Create new set...** / **Manage sets...**, or manually in `~/.config/cgoose/sets/`
+- Created/managed via the TUI: **Set → ⚙️ Create new set...** / **Manage sets...**, or manually in `~/.config/rossii/sets/`
 
 ### "None" vs "Default" vs a set
 
 - **None** (`""`) → classic: `--no-profile` only, a session with **no extensions at all**;
   chat: `_meta.enabledExtensions: []` — no profile and (1.50.0 / 1.57.0) no extensions at all; some builds
-  inject their own `developer`, which cgoose treats as allowed but never adds or removes
+  inject their own `developer`, which rossii treats as allowed but never adds or removes
 - **Default** (`__default__` sentinel in `src/launcher.ts`) → no flags at all, so Goose loads the profile from `~/.config/goose/config.yaml`; chat sends no `enabledExtensions` at all
 - **Set** → exactly the flags/typed list derived from the set
 
@@ -72,7 +78,7 @@ Extension flags are only effective when a session is **created**. On resume Goos
 
 ### Prompt on resume
 
-Goose ≥ 1.55 persists `--system` in the session DB (`system_prompt_extras`), so on resume cgoose:
+Goose ≥ 1.55 persists `--system` in the session DB (`system_prompt_extras`), so on resume rossii:
 1. Applies the **currently selected set's** `systemPrompt` via `--system` — edit the set, resume, get the fresh prompt
 2. Passes an explicit `--system ""` when **no set** is selected, so "no set" really means "no additional prompt". Omitting the flag would *restore* a previously stored prompt instead of clearing it
 
@@ -88,17 +94,17 @@ When creating a new session inside a git repo:
 4. On session deletion, cleans up worktree and branch
 
 Control:
-- `CGOOSE_NO_WORKTREE=1` — skip worktree creation
-- `CGOOSE_FORCE_WORKTREE=1` — force worktree (overrides above)
+- `ROSSII_NO_WORKTREE=1` — skip worktree creation
+- `ROSSII_FORCE_WORKTREE=1` — force worktree (overrides above)
 - `-m` CLI flag disables worktree (default)
 - `-w` CLI flag enables worktree
-- Config `~/.config/cgoose/config.json`: `{ "default_mode": "worktree" }` — override default to worktree mode
+- Config `~/.config/rossii/config.json`: `{ "default_mode": "worktree" }` — override default to worktree mode
 
 ## Chat Mode (ACP) — default renderer
 
-cgoose itself renders the dialog by default. It spawns `goose acp` (Agent Client
+rossii itself renders the dialog by default. It spawns `goose acp` (Agent Client
 Protocol, JSON-RPC 2.0 over stdio) and drives it as an ACP client using
-`@earendil-works/pi-tui`. `CGOOSE_ACP_MODE=classic` (or `0`/`off`/`false`/`session`)
+`@earendil-works/pi-tui`. `ROSSII_ACP_MODE=classic` (or `0`/`off`/`false`/`session`)
 hands the terminal over to the classic `goose session` TUI instead; an unrecognised value
 warns in the TUI and keeps the ACP default.
 
@@ -117,7 +123,7 @@ warns in the TUI and keeps the ACP default.
   streaming: follow-end turns off when the user scrolls up and resumes at the bottom.
   `tui.stop()` prints the final
   transcript back to the normal screen, so scrollback keeps the conversation.
-  `CGOOSE_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
+  `ROSSII_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
   scrollback, so any repaint — spinner, streamed chunk — pulls the view to the bottom)
 - Session sets in chat mode (verified live on goose 1.50.0 and 1.57.0 via the probes described in
   `plans/acp-mode-review5.md`):
@@ -148,7 +154,7 @@ warns in the TUI and keeps the ACP default.
   - after creating a session the chat reads the real extension list and warns only if profile
     extensions leaked in (a goose that ignores the field) or expected ones are missing
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
-    (`mode: "set"`, key `cgoose`); empty text clears it — same "set is source of
+    (`mode: "set"`, key `rossii`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
 - **Live configuration** — no restart: slash commands typed into the composer
   (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`) plus `SelectList`
@@ -210,9 +216,9 @@ warns in the TUI and keeps the ACP default.
   ACP clients are trusted — MCP servers effectively get the same access
 - Two watchdogs bound a turn (`src/acp/timeouts.ts`); both are disabled by `0`, and a
   malformed value warns in the chat instead of silently switching the guard off:
-  - `CGOOSE_ACP_IDLE_TIMEOUT_MS` (default 5 min) — no `session/update` from the agent for
+  - `ROSSII_ACP_IDLE_TIMEOUT_MS` (default 5 min) — no `session/update` from the agent for
     that long → `session/cancel`; a long but *live* turn is never interrupted
-  - `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 4 h) — absolute cap on a single turn; on
+  - `ROSSII_ACP_PROMPT_TIMEOUT_MS` (default 4 h) — absolute cap on a single turn; on
     timeout the client also sends `session/cancel` and the UI reports the error
 - `session/new` `_meta` is built by `newSessionMeta()` (`src/acp/session-meta.ts`) and stays FLAT:
   goose reads session fields at the top level (`_meta.goose` is only for initialize
@@ -254,16 +260,16 @@ warns in the TUI and keeps the ACP default.
 
 | What | Path |
 |------|------|
-| Per-project memory | `~/.config/cgoose/projects/<dir>-<hash>.json` |
-| Session sets | `~/.config/cgoose/sets/*.json` |
-| cgoose config | `~/.config/cgoose/config.json` |
+| Per-project memory | `~/.config/rossii/projects/<dir>-<hash>.json` |
+| Session sets | `~/.config/rossii/sets/*.json` |
+| rossii config | `~/.config/rossii/config.json` |
 | Provider configs | `~/.config/goose/custom_providers/*.json` |
 | Goose config | `~/.config/goose/config.yaml` |
 | Goose sessions | `~/.local/share/goose/sessions/sessions.db` |
 
 ## Local Config Overrides
 
-cgoose looks for `.goose/config.yaml` in the session's worktree (or project root):
+rossii looks for `.goose/config.yaml` in the session's worktree (or project root):
 
 - Sets `GOOSE_ADDITIONAL_CONFIG_FILES` so Goose loads it alongside main config
 - Resolves `${VARIABLE}` / `$VARIABLE` references from Goose secrets and injects into session environment
@@ -277,10 +283,10 @@ Append to `models` array in `~/.config/goose/custom_providers/<name>.json`:
 ```
 
 ### Create a session set manually
-Write `~/.config/cgoose/sets/<name>.json` with the shape above, or use the TUI wizard.
+Write `~/.config/rossii/sets/<name>.json` with the shape above, or use the TUI wizard.
 
 ### Reset project history
-Delete the corresponding file in `~/.config/cgoose/projects/`.
+Delete the corresponding file in `~/.config/rossii/projects/`.
 
 ## Navigation
 

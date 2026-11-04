@@ -1,5 +1,5 @@
 /**
- * Chat TUI — cgoose's own dialog renderer on top of @earendil-works/pi-tui.
+ * Chat TUI — rossii's own dialog renderer on top of @earendil-works/pi-tui.
  *
  * Talks to a spawned `goose acp` agent via AcpClient (JSON-RPC over stdio):
  *   initialize → session/new | session/load → session/prompt ⇄ session/update
@@ -90,7 +90,7 @@ import {
   setSessionSystemPrompt,
 } from "./custom";
 import { BorderBox, SearchableList } from "./overlay";
-import { listSessionSets, type SessionSet } from "../cgoose-config";
+import { listSessionSets, type SessionSet } from "../rossii-config";
 import {
   addModelToCustomProviderJson,
   getConfigProviders,
@@ -100,7 +100,7 @@ import {
 } from "../config";
 import { fetchModels, type ApiModelInfo } from "../models";
 import { getAllSessions } from "../sessions";
-import { formatNumber } from "../utils";
+import { env, formatNumber } from "../utils";
 import { getProjectSessionDirs, isInsideGitRepo } from "../worktree";
 import { buildExtensionArgs, listGooseExtensions } from "../goose-extensions";
 import { newSessionMeta } from "./session-meta";
@@ -208,6 +208,14 @@ const STATUS_ICON: Record<string, string> = {
 /** ACP `fs/read_text_file` default window (the spec suggests 2000 lines). */
 const DEFAULT_READ_LIMIT = 2000;
 
+/**
+ * Session-prompt key in goose's `system_prompt_extras` map. It doubles as the
+ * project's history: sessions created as `cgoose` keep their prompt under that
+ * key, and `applySystemPrompt()` clears it when the new one is set.
+ */
+const PROMPT_KEY = "rossii";
+const LEGACY_PROMPT_KEY = "cgoose";
+
 export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // Keep the last stderr lines around so an agent crash can be explained.
   const stderrTail: string[] = [];
@@ -226,7 +234,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     onStderr: (line) => {
       stderrTail.push(line);
       if (stderrTail.length > 20) stderrTail.shift();
-      if (process.env.CGOOSE_DEBUG === "1") {
+      if (env("DEBUG") === "1") {
         process.stderr.write(`${pc.dim(line)}\n`);
       }
     },
@@ -241,10 +249,10 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // On exit pi-tui prints the final transcript to
   // the normal screen, so the conversation still lands in the scrollback.
   //
-  // CGOOSE_CHAT_MAIN_SCREEN=1 restores the inline renderer, where the terminal
+  // ROSSII_CHAT_MAIN_SCREEN=1 restores the inline renderer, where the terminal
   // owns the scrollback: any repaint writes at the cursor and pulls the view
   // down, so reading history during a turn is best-effort there.
-  const altScreen = process.env.CGOOSE_CHAT_MAIN_SCREEN !== "1";
+  const altScreen = env("CHAT_MAIN_SCREEN") !== "1";
   const tui: TUI = altScreen ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
 
   const transcript = new Container();
@@ -282,8 +290,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // Turn watchdogs (see ./timeouts.ts). `lastAgentActivity` is refreshed by
   // every session/update, so only a *silent* agent is cancelled by the idle
   // guard; the hard cap is the last-resort bound on one turn.
-  const idleTimeout = resolveTimeoutMs(process.env[IDLE_TIMEOUT_ENV], DEFAULT_IDLE_TIMEOUT_MS, IDLE_TIMEOUT_ENV);
-  const turnTimeout = resolveTimeoutMs(process.env[TURN_TIMEOUT_ENV], DEFAULT_TURN_TIMEOUT_MS, TURN_TIMEOUT_ENV);
+  const idleTimeout = resolveTimeoutMs(env("ACP_IDLE_TIMEOUT_MS"), DEFAULT_IDLE_TIMEOUT_MS, IDLE_TIMEOUT_ENV);
+  const turnTimeout = resolveTimeoutMs(env("ACP_PROMPT_TIMEOUT_MS"), DEFAULT_TURN_TIMEOUT_MS, TURN_TIMEOUT_ENV);
   const timeoutWarnings = [idleTimeout.invalid, turnTimeout.invalid].filter((w): w is string => w !== null);
   let lastAgentActivity = 0;
   let cancelRequested = false;
@@ -439,6 +447,25 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
    *  ignores every extension channel, so the selected set is applied by diffing
    *  the live list and adding/removing the difference. Classic mode drops the
    *  extension flags on resume; chat mode makes the set authoritative. */
+  /**
+   * Apply the set's system prompt, and drop the one stored under the pre-3.0
+   * `cgoose` key.
+   *
+   * goose keeps `system_prompt_extras` as a map keyed by client name, so a
+   * session resumed from the old build would otherwise carry *two* prompts —
+   * the set's new one plus the stale old one. Clearing the legacy key is one
+   * cheap request and never fatal: an unknown key or an older goose simply
+   * has nothing to clear.
+   */
+  async function applySystemPrompt(id: string, text: string): Promise<void> {
+    await setSessionSystemPrompt(client, id, { mode: "set", key: PROMPT_KEY, text });
+    try {
+      await setSessionSystemPrompt(client, id, { mode: "set", key: LEGACY_PROMPT_KEY, text: "" });
+    } catch {
+      // nothing stored under the legacy key (or no support) — fine
+    }
+  }
+
   async function reconcileSessionExtensions(id: string, context = "resumed session"): Promise<void> {
     let actual: Awaited<ReturnType<typeof listSessionExtensions>>;
     try {
@@ -763,7 +790,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     const title = sessionTitle ? `  ${pc.dim(`· ${sessionTitle}`)}` : "";
     const setText = currentSetLabel ? `  ${pc.dim(`· set: ${currentSetLabel}`)}` : "";
     headerLine.setText(
-      `${pc.green("🪿 cgoose chat")}  ${pc.dim(`${currentProvider}/${currentModel}  ${opts.cwd}`)}${title}${setText}`,
+      `${pc.green("🪿 rossii chat")}  ${pc.dim(`${currentProvider}/${currentModel}  ${opts.cwd}`)}${title}${setText}`,
     );
     tui.requestRender();
   };
@@ -889,11 +916,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     for (const warning of next.warnings) noteExtensionWarning(warning);
 
     try {
-      await setSessionSystemPrompt(client, sessionId, {
-        mode: "set",
-        key: "cgoose",
-        text: newSet?.systemPrompt ?? "",
-      });
+      await applySystemPrompt(sessionId, newSet?.systemPrompt ?? "");
       transcript.addChild(
         new Text(
           pc.dim(
@@ -992,7 +1015,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       sessionTitle = "New Chat";
       transcript.addChild(new Text(pc.dim(`─── New session started: ${sessionId} ───`), 1, 0));
       await applySessionConfig(client, sessionId, { provider: currentProvider, model: currentModel }, {});
-      await setSessionSystemPrompt(client, sessionId, { mode: "set", key: "cgoose", text: currentSet?.systemPrompt ?? "" });
+      await applySystemPrompt(sessionId, currentSet?.systemPrompt ?? "");
       renderHeader();
       tui.requestRender();
     } catch (error) {
@@ -1027,7 +1050,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     let dir: string;
     let file: string;
     try {
-      dir = await mkdtemp(join(tmpdir(), "cgoose-edit-"));
+      dir = await mkdtemp(join(tmpdir(), "rossii-edit-"));
       file = join(dir, "prompt.md");
       await writeFile(file, editor.getText(), "utf8");
     } catch (error) {
@@ -1048,7 +1071,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         };
         // Through the shell: `$EDITOR` is commonly `code --wait` or `nvim -f`,
         // and `"$1"` keeps the path safe whatever it contains.
-        const child = spawn(process.env.SHELL?.trim() || "/bin/sh", ["-c", `${command} "$1"`, "cgoose-edit", file], {
+        const child = spawn(process.env.SHELL?.trim() || "/bin/sh", ["-c", `${command} "$1"`, "rossii-edit", file], {
           stdio: "inherit",
           env: process.env,
         });
@@ -1115,7 +1138,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     tui.requestRender();
   };
 
-  /** `session/fork` copies the conversation into a new session; cgoose then
+  /** `session/fork` copies the conversation into a new session; rossii then
    *  re-applies the current provider/model pair and reconciles the extensions
    *  against the current set, so the copy keeps the configuration on screen. */
   const forkCurrentSession = async (): Promise<void> => {
@@ -1830,11 +1853,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     // prompt must not kill an otherwise working session.
     if (sessionId) {
       try {
-        await setSessionSystemPrompt(client, sessionId, {
-          mode: "set",
-          key: "cgoose",
-          text: opts.set?.systemPrompt ?? "",
-        });
+        await applySystemPrompt(sessionId, opts.set?.systemPrompt ?? "");
       } catch (error) {
         transcript.addChild(new Text(
           pc.yellow(`⚠ System prompt not applied: ${String((error as Error)?.message ?? error)}`),

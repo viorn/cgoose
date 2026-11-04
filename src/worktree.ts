@@ -1,5 +1,5 @@
 /**
- * Git worktree management for cgoose sessions
+ * Git worktree management for rossii sessions
  *
  * Convention:
  *   Worktree path: <repo-root>/.worktree/<sanitized-session-name>
@@ -69,8 +69,8 @@ export function getWorktreePath(repoRoot: string, sessionName: string): string {
   return join(repoRoot, WORKTREE_DIR, sanitize(sessionName));
 }
 
-/** Check if a path is inside the .worktree directory (i.e. cgoose-managed) */
-function isCgooseWorktree(repoRoot: string, path: string): boolean {
+/** Check if a path is inside the .worktree directory (i.e. rossii-managed) */
+function isRossiiWorktree(repoRoot: string, path: string): boolean {
   return resolve(path).startsWith(resolve(join(repoRoot, WORKTREE_DIR)));
 }
 
@@ -218,7 +218,7 @@ export function removeWorktree(sessionName: string): boolean {
 }
 
 /**
- * Get all cgoose-managed worktree paths for the current repo.
+ * Get all rossii-managed worktree paths for the current repo.
  * Returns empty array if not in a git repo.
  *
  * Parses `git worktree list --porcelain` format:
@@ -251,7 +251,7 @@ export function getRepoWorktreePaths(): string[] {
         }
       }
 
-      if (path && isCgooseWorktree(repoRoot, path)) {
+      if (path && isRossiiWorktree(repoRoot, path)) {
         worktrees.push(path);
       }
     }
@@ -263,7 +263,7 @@ export function getRepoWorktreePaths(): string[] {
 /**
  * Get all directory paths that are part of this project:
  * - The repo root (if in a git repo)
- * - All cgoose-managed worktree paths
+ * - All rossii-managed worktree paths
  * Falls back to [cwd] if not in a git repo.
  *
  * Used for session listing: sessions in worktrees have a different
@@ -288,11 +288,11 @@ export function getSessionWorktreePath(sessionName: string): string | null {
 }
 
 /**
- * Get all session names that have cgoose-managed worktrees in this repo.
+ * Get all session names that have rossii-managed worktrees in this repo.
  * Useful for session listing: sessions in worktrees should show up
  * even though their working_dir differs from the main repo CWD.
  *
- * Extracts session name from branch name (cgoose-<name> → <name>).
+ * Extracts session name from branch name (rossii-<name> → <name>).
  */
 export function getWorktreeSessionNames(): string[] {
   const repoRoot = getRepoRoot();
@@ -317,7 +317,7 @@ export function getWorktreeSessionNames(): string[] {
         }
       }
 
-      if (path && isCgooseWorktree(repoRoot, path)) {
+      if (path && isRossiiWorktree(repoRoot, path)) {
         // Extract session name from the directory name inside .worktree/
         const name = basename(path);
         if (name) names.push(name);

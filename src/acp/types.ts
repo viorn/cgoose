@@ -1,5 +1,5 @@
 /**
- * ACP (Agent Client Protocol) wire types — minimal subset needed by cgoose.
+ * ACP (Agent Client Protocol) wire types — minimal subset needed by rossii.
  *
  * Protocol: JSON-RPC 2.0 over stdio, newline-delimited JSON (one message per line).
  * Reference: https://agentclientprotocol.com/protocol/overview
@@ -96,7 +96,7 @@ export interface NewSessionMeta {
   /** Client-supplied session name; goose will not regenerate it. */
   sessionTitle?: string;
   /**
-   * Requested provider. Deliberately **not** sent by cgoose: with the key
+   * Requested provider. Deliberately **not** sent by rossii: with the key
    * present goose resolves the model through the provider registry's default
    * model and ignores `GOOSE_MODEL`, so the model picked in the wizard was
    * silently replaced. `GOOSE_PROVIDER`/`GOOSE_MODEL` (set by `launcher.ts`)
@@ -178,7 +178,7 @@ export interface LoadSessionRequest {
 /**
  * `session/load` answers with the same shape as `session/new`, including the
  * refreshed `configOptions` (verified live on goose 1.57: provider/model/mode/
- * thinking_effort are all there). cgoose used to discard this response and lose
+ * thinking_effort are all there). rossii used to discard this response and lose
  * the model list on every resume — that is why the configuration menus had
  * nothing to show for a resumed session.
  */

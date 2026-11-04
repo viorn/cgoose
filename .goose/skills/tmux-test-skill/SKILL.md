@@ -1,11 +1,11 @@
 ---
 name: tmux-test-skill
-description: End-to-end testing of cgoose's interactive TUI inside tmux — wizard flows, session sets, extension reconciliation — verified against goose's sessions.db without spending LLM tokens. Use when a change touches the TUI, the launch path, session sets, or ACP extension handling and you need proof it works in a real terminal, not just in unit tests.
+description: End-to-end testing of rossii's interactive TUI inside tmux — wizard flows, session sets, extension reconciliation — verified against goose's sessions.db without spending LLM tokens. Use when a change touches the TUI, the launch path, session sets, or ACP extension handling and you need proof it works in a real terminal, not just in unit tests.
 ---
 
-# Testing cgoose through tmux
+# Testing rossii through tmux
 
-cgoose's chat and wizard render with pi-tui, which repaints whole screens. Raw
+rossii's chat and wizard render with pi-tui, which repaints whole screens. Raw
 pty capture is a soup of escape sequences; **tmux is the reliable harness**:
 `capture-pane` gives the visible screen, `send-keys` drives the prompts.
 
@@ -16,8 +16,8 @@ session, so a full verification costs zero tokens.
 
 - `tmux`, `sqlite3`, `bun`
 - run from the repo root so `bun src/index.ts` uses the working tree
-- `CGOOSE_NO_WORKTREE=1` so test runs do not create git worktrees
-- use a throwaway working directory (e.g. `/tmp/cgoose-test-<topic>`): cgoose
+- `ROSSII_NO_WORKTREE=1` so test runs do not create git worktrees
+- use a throwaway working directory (e.g. `/tmp/rossii-test-<topic>`): rossii
   remembers settings **per directory**, and the session list is per directory
 
 ## Helper
@@ -28,10 +28,10 @@ the handshake goose 1.57 expects — use it to test stdio extensions in a set.
 
 ```bash
 SKILL_DIR=.goose/skills/tmux-test-skill
-rm -rf /tmp/cgoose-check && mkdir -p /tmp/cgoose-check
+rm -rf /tmp/rossii-check && mkdir -p /tmp/rossii-check
 
 python3 $SKILL_DIR/scripts/tmux-drive.py start --name t \
-  --cwd /tmp/cgoose-check --cmd 'CGOOSE_NO_WORKTREE=1 bun /abs/path/to/src/index.ts'
+  --cwd /tmp/rossii-check --cmd 'ROSSII_NO_WORKTREE=1 bun /abs/path/to/src/index.ts'
 python3 $SKILL_DIR/scripts/tmux-drive.py wait --name t --pattern 'Session set'
 python3 $SKILL_DIR/scripts/tmux-drive.py type --name t probe   # filter, do not count arrows
 python3 $SKILL_DIR/scripts/tmux-drive.py send --name t Enter
@@ -52,7 +52,7 @@ python3 $SKILL_DIR/scripts/tmux-drive.py kill --name t
 6. **Launch** — `Yes / No`, Enter launches.
 
 Keys: `Enter` confirm, `Esc` back one step, `Space` toggle in multiselects,
-`Ctrl+C` exit cgoose entirely.
+`Ctrl+C` exit rossii entirely.
 
 ## Pacing rules (this is where naive automation breaks)
 
@@ -72,7 +72,7 @@ The UI message is a hint; the database is the truth.
 ```bash
 # what a session actually has
 sqlite3 ~/.local/share/goose/sessions/sessions.db \
-  "select id, name, extension_data from sessions where name like 'cgoose-check%';"
+  "select id, name, extension_data from sessions where name like 'rossii-check%';"
 
 # readable form
 sqlite3 ~/.local/share/goose/sessions/sessions.db \
@@ -96,7 +96,7 @@ Tools (not just the extension list) can be checked over raw ACP —
 
 ## Session sets
 
-- Files: `~/.config/cgoose/sets/<name>.yaml` (legacy `.json` also read).
+- Files: `~/.config/rossii/sets/<name>.yaml` (legacy `.json` also read).
   Shape: `name`, `title`, `description`, `systemPrompt`, `builtins`,
   `extensions` (config.yaml keys), `stdioExtensions`.
 - **A malformed YAML is dropped silently** (`listSessionSets` swallows the parse
@@ -127,10 +127,10 @@ goose 1.57 starts with `server/discover` (MCP 2026-07-28) and needs a real
 ```bash
 python3 $SKILL_DIR/scripts/tmux-drive.py kill --name t
 sqlite3 ~/.local/share/goose/sessions/sessions.db \
-  "delete from sessions where name like 'cgoose-check%';"
-rm -rf /tmp/cgoose-check
-rm -f ~/.config/cgoose/projects/cgoose-check-*.json
-rm -f ~/.config/cgoose/sets/probe-*.yaml
+  "delete from sessions where name like 'rossii-check%';"
+rm -rf /tmp/rossii-check
+rm -f ~/.config/rossii/projects/rossii-check-*.json
+rm -f ~/.config/rossii/sets/probe-*.yaml
 ```
 
 `tmux kill-session` on the **last** session kills the tmux server — harmless,

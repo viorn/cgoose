@@ -1,25 +1,30 @@
-# cgoose — ACP-интерфейс для Goose
+# rossii — ACP-интерфейс для Goose
 
-**cgoose** — полноценный терминальный интерфейс для [Goose](https://github.com/block/goose).
+**rossii** — полноценный терминальный интерфейс для [Goose](https://github.com/block/goose).
 Он говорит с `goose acp` по **Agent Client Protocol (ACP)** и сам рисует диалог: потоковый ответ,
 thinking, вызовы инструментов, запросы разрешений, токены и стоимость — а вокруг этого остаётся
 весь workflow: память по проектам, session set'ы, worktree, смена провайдера/модели и поиск моделей.
 
-Это уже не обёртка, которая набирает `goose session` за вас. Чат — это и есть cgoose; классический
-TUI Goose остался опцией (`CGOOSE_ACP_MODE=classic`).
+Это уже не обёртка, которая набирает `goose session` за вас. Чат — это и есть rossii; классический
+TUI Goose остался опцией (`ROSSII_ACP_MODE=classic`).
 
 > **⚠ Протестировано только на Linux.** Может работать на macOS (нет `secret-tool`, file-based секреты работают). Windows не поддерживается.
 >
 > Нужен Goose с подкомандой `acp` — проверено на **1.50.0** и **1.57.0**.
 
+> **Переименован в 3.0.0.** До 2.4.0 проект назывался **cgoose** — теперь *Anser rossii*, гусь Росса,
+> самый мелкий гусь (старое имя и описание сохранены в [`docs/legacy-classic.ru.md`](docs/legacy-classic.ru.md)).
+> Настройки читаются из `~/.config/rossii` с фолбэком на старый `~/.config/cgoose`, а переменные
+> `ROSSII_*` по-прежнему понимают написание `CGOOSE_*`.
+
 ---
 
 ## Демо — визард
 
-![cgoose workflow](flow.gif)
+![rossii workflow](flow.gif)
 
 Визард никуда не делся — он собирает сессию, набор, провайдера и модель — но теперь сразу открывает
-собственный чат cgoose.
+собственный чат rossii.
 
 ---
 
@@ -33,18 +38,18 @@ TUI Goose остался опцией (`CGOOSE_ACP_MODE=classic`).
 
 ---
 
-## Зачем cgoose?
+## Зачем rossii?
 
 CLI Goose работает, но каждая сессия начинается с одних и тех же вопросов: какой провайдер я
 использовал в этом проекте, с какой моделью, под каким именем, с каким системным промптом и
 расширениями? А когда сессия уже идёт, любое изменение означает рестарт.
 
-**cgoose помнит** — и позволяет менять ответ *на ходу*, не теряя разговор:
+**rossii помнит** — и позволяет менять ответ *на ходу*, не теряя разговор:
 
 - история сессий, провайдеров, моделей и наборов по каждому проекту;
 - чат, рассчитанный на длинные ходы: стриминг, инструменты, разрешения, свой скроллбек, вотчдоги;
 - живая перенастройка — провайдер, модель, набор и сессия переключаются без перезапуска;
-- те же данные Goose (`config.yaml`, `custom_providers/`, `sessions.db`), поэтому `goose` и cgoose
+- те же данные Goose (`config.yaml`, `custom_providers/`, `sessions.db`), поэтому `goose` и rossii
   видят одни и те же сессии.
 
 ---
@@ -55,7 +60,7 @@ CLI Goose работает, но каждая сессия начинается 
 
 ```bash
 bash build.sh
-./cgoose
+./rossii
 ```
 
 **Bun** нужен только для сборки; готовый бинарник запускается на любом Linux x86_64 без Bun.
@@ -64,10 +69,10 @@ bash build.sh
 
 ```bash
 bash install.sh
-cgoose
+rossii
 ```
 
-Ставит исходники + зависимости в `~/.local/lib/cgoose/` и лаунчер в `~/.local/bin/cgoose`
+Ставит исходники + зависимости в `~/.local/lib/rossii/` и лаунчер в `~/.local/bin/rossii`
 (проверьте, что `~/.local/bin` в `PATH`).
 
 ### Вариант 3: запуск из исходников (требует Bun)
@@ -81,13 +86,13 @@ bun start
 
 ## Чат
 
-cgoose запускает `goose acp` и работает как ACP-клиент:
+rossii запускает `goose acp` и работает как ACP-клиент:
 
 - **Стриминг** — текст появляется по мере генерации, thinking показывается отдельным блоком, вызовы
   инструментов и их результаты печатаются по ходу, а статус-строка считает контекст, токены и цену.
 - **Свой экран** — чат занимает alternate screen и сам скроллит транскрипт (колесо мыши, PgUp/PgDn,
   Ctrl+Shift+F — поиск), композер закреплён внизу. Стриминг больше не дёргает вид вниз. При выходе
-  транскрипт печатается в обычный экран и остаётся в скроллбеке. `CGOOSE_CHAT_MAIN_SCREEN=1`
+  транскрипт печатается в обычный экран и остаётся в скроллбеке. `ROSSII_CHAT_MAIN_SCREEN=1`
   возвращает inline-рендер.
 - **Разрешения** — `session/request_permission` показывается рамным диалогом (запросы от
   параллельных вызовов инструментов встают в очередь); Esc или Ctrl+C отклоняют. Во время хода
@@ -155,7 +160,7 @@ cgoose запускает `goose acp` и работает как ACP-клиен�
 
 ## Session set'ы
 
-**Session set** — YAML-файл `~/.config/cgoose/sets/<name>.yaml`, который связывает системный промпт
+**Session set** — YAML-файл `~/.config/rossii/sets/<name>.yaml`, который связывает системный промпт
 и расширения:
 
 ```yaml
@@ -178,7 +183,7 @@ stdioExtensions: ["mcpls --trust-project-config"]     # произвольные
 
 | Выбор | Результат |
 |-------|-----------|
-| **None** | Сессия вообще без расширений (`--no-profile` в классике, пустой список `enabledExtensions` в чате). Некоторые сборки Goose добавляют свой `developer` — cgoose это терпит и никогда его не добавляет и не убирает. |
+| **None** | Сессия вообще без расширений (`--no-profile` в классике, пустой список `enabledExtensions` в чате). Некоторые сборки Goose добавляют свой `developer` — rossii это терпит и никогда его не добавляет и не убирает. |
 | **Default** | Профиль не трогаем: загружается всё, что включено в `~/.config/goose/config.yaml`. |
 | **&lt;набор&gt;** | Ровно то, что перечислено в наборе. |
 
@@ -189,7 +194,7 @@ stdioExtensions: ["mcpls --trust-project-config"]     # произвольные
 
 **Почему не recipes?** Recipes запускаются через `goose run --recipe` — это одноразовая сессия без
 возможности resume. Установленные recipes по-прежнему находятся (`goose recipe list --format json`) и
-показываются в визарде, но запускает cgoose именно набор.
+показываются в визарде, но запускает rossii именно набор.
 
 ---
 
@@ -228,12 +233,12 @@ stdioExtensions: ["mcpls --trust-project-config"]     # произвольные
 открывается сразу. В классическом режиме вопрос «Launch Goose now?» остаётся.
 
 ```bash
-cgoose a            # возобновить последнюю сессию — чат открывается сразу
-cgoose n            # новая сессия — чат открывается сразу
-cgoose s            # выбрать сессию, затем запуск
-cgoose wa           # авторезюм с git worktree
+rossii a            # возобновить последнюю сессию — чат открывается сразу
+rossii n            # новая сессия — чат открывается сразу
+rossii s            # выбрать сессию, затем запуск
+rossii wa           # авторезюм с git worktree
 
-CGOOSE_ACP_MODE=classic cgoose n   # отдать терминал классическому `goose session`
+ROSSII_ACP_MODE=classic rossii n   # отдать терминал классическому `goose session`
 ```
 
 ---
@@ -249,7 +254,7 @@ CGOOSE_ACP_MODE=classic cgoose n   # отдать терминал класси�
 - **Ollama** определяется автоматически, если запущена локально; модели показываются с бейджем
   поддержки инструментов.
 - API-ключи читаются из системного keyring (libsecret), `~/.config/goose/secrets.yaml` и окружения.
-  Если ключа нет — cgoose подскажет, какую переменную задать.
+  Если ключа нет — rossii подскажет, какую переменную задать.
 - `.goose/config.yaml` проекта (или worktree сессии) подключается через
   `GOOSE_ADDITIONAL_CONFIG_FILES`, а `${VAR}` / `$VAR` в нём разрешаются из секретов Goose до старта
   сессии.
@@ -264,13 +269,13 @@ CGOOSE_ACP_MODE=classic cgoose n   # отдать терминал класси�
 - удаление сессии убирает worktree и ветку;
 - «протухшие» регистрации чистятся автоматически;
 - вне git-репозитория не используется; включается на запуск флагами `w`/`wa`/`ws`/`wn` или навсегда —
-  `{ "default_mode": "worktree" }` в `~/.config/cgoose/config.json`.
+  `{ "default_mode": "worktree" }` в `~/.config/rossii/config.json`.
 
 ---
 
 ## Требования и совместимость
 
-- **Goose** с подкомандой `acp`. Если её нет, cgoose предупреждает и переключается на классический
+- **Goose** с подкомандой `acp`. Если её нет, rossii предупреждает и переключается на классический
   `goose session`.
 - Запросы `_goose/unstable/*` (системный промпт, add/remove/list расширений, rename) на сборках без
   них деградируют в предупреждения чата — старый Goose продолжит работать с тем, что умеет.
@@ -283,21 +288,21 @@ CGOOSE_ACP_MODE=classic cgoose n   # отдать терминал класси�
 
 | Переменная | По умолчанию | Значение |
 |------------|--------------|----------|
-| `CGOOSE_ACP_MODE` | `acp` | `classic` отдаёт терминал `goose session` вместо чата cgoose |
-| `CGOOSE_ACP_IDLE_TIMEOUT_MS` | `300000` | отменить ход, если агент молчит столько миллисекунд (`0` — выключить) |
-| `CGOOSE_ACP_PROMPT_TIMEOUT_MS` | `14400000` | жёсткий лимит на один ход (`0` — выключить) |
-| `CGOOSE_CHAT_MAIN_SCREEN` | не задана | `1` рисует чат inline, без alternate screen |
-| `CGOOSE_NO_WORKTREE` | задана по умолчанию | `1` — не создавать worktree |
-| `CGOOSE_FORCE_WORKTREE` | не задана | `1` — всегда создавать worktree (перебивает предыдущую) |
-| `CGOOSE_DEBUG` | не задана | `1` — показывать stderr `goose acp` и команду запуска |
-| `GOOSE_PATH_ROOT` | `~/.local/share/goose` | где cgoose ищет `sessions/sessions.db` (Goose уважает ту же переменную) |
+| `ROSSII_ACP_MODE` | `acp` | `classic` отдаёт терминал `goose session` вместо чата rossii |
+| `ROSSII_ACP_IDLE_TIMEOUT_MS` | `300000` | отменить ход, если агент молчит столько миллисекунд (`0` — выключить) |
+| `ROSSII_ACP_PROMPT_TIMEOUT_MS` | `14400000` | жёсткий лимит на один ход (`0` — выключить) |
+| `ROSSII_CHAT_MAIN_SCREEN` | не задана | `1` рисует чат inline, без alternate screen |
+| `ROSSII_NO_WORKTREE` | задана по умолчанию | `1` — не создавать worktree |
+| `ROSSII_FORCE_WORKTREE` | не задана | `1` — всегда создавать worktree (перебивает предыдущую) |
+| `ROSSII_DEBUG` | не задана | `1` — показывать stderr `goose acp` и команду запуска |
+| `GOOSE_PATH_ROOT` | `~/.local/share/goose` | где rossii ищет `sessions/sessions.db` (Goose уважает ту же переменную) |
 
 ---
 
 ## Как это устроено
 
 ```
-cgoose (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
+rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
         │                                           │
         │  initialize / session/new | session/load   │
         │  session/prompt ⇄ session/update           │
@@ -332,8 +337,8 @@ bun run acp:smoke # AcpClient без TUI
 
 | Скрипт | Что делает |
 |--------|------------|
-| `build.sh` | собирает standalone-бинарник (`./cgoose`) со встроенным рантаймом Bun |
-| `install.sh` | ставит исходники в `~/.local/lib/cgoose/` и лаунчер в `~/.local/bin/cgoose` |
+| `build.sh` | собирает standalone-бинарник (`./rossii`) со встроенным рантаймом Bun |
+| `install.sh` | ставит исходники в `~/.local/lib/rossii/` и лаунчер в `~/.local/bin/rossii` |
 
 Интерфейсов тут два: чат рисуется на [pi-tui](https://github.com/earendil-works/pi-tui), визард
 настройки по-прежнему использует промпты [Clack](https://github.com/natemoo-re/clack).
@@ -348,23 +353,23 @@ bun run acp:smoke # AcpClient без TUI
 | Кастомные провайдеры | `~/.config/goose/custom_providers/*.json` |
 | Секреты | системный keyring · `~/.config/goose/secrets.yaml` · окружение |
 | Сессии (оба интерфейса) | `~/.local/share/goose/sessions/sessions.db` |
-| Session set'ы | `~/.config/cgoose/sets/*.yaml` (старые `.json` тоже читаются) |
-| Память по проектам | `~/.config/cgoose/projects/<dir>-<hash>.json` |
-| Конфиг cgoose | `~/.config/cgoose/config.json` |
+| Session set'ы | `~/.config/rossii/sets/*.yaml` (старые `.json` тоже читаются) |
+| Память по проектам | `~/.config/rossii/projects/<dir>-<hash>.json` |
+| Конфиг rossii | `~/.config/rossii/config.json` |
 | Git worktree | `<repo>/.worktree/<name>` |
 
 ---
 
 ## Legacy: до ACP-рендерера
 
-До v2.2 cgoose был визардом на Clack: он собирал флаги и запускал `goose session`, а разговаривал с
+До v2.2 rossii был визардом на Clack: он собирал флаги и запускал `goose session`, а разговаривал с
 вами родной TUI Goose. То описание сохранено как история — вместе с тем, что та версия умела и чего
 не умела:
 
 - [docs/legacy-classic.ru.md](docs/legacy-classic.ru.md) — архивный README (по-русски)
 - [docs/legacy-classic.md](docs/legacy-classic.md) — archived README (English)
 
-Классический путь жив и в коде: `CGOOSE_ACP_MODE=classic` отдаёт терминал `goose session` с теми же
+Классический путь жив и в коде: `ROSSII_ACP_MODE=classic` отдаёт терминал `goose session` с теми же
 наборами, worktree и историей по проектам.
 
 ---

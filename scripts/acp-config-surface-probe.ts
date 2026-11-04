@@ -13,7 +13,7 @@
 import { spawn } from "node:child_process";
 import { newSessionMeta } from "../src/acp/session-meta";
 
-const BIN = process.env.CGOOSE_ACP_BIN || "goose";
+const BIN = process.env.ROSSII_ACP_BIN || "goose";
 const TIMEOUT_MS = 120_000;
 let nextId = 1;
 let child: ReturnType<typeof spawn> | null = null;

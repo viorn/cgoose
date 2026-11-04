@@ -1,5 +1,5 @@
 /**
- * Launch Goose: classic TUI mode (`goose session`) or cgoose chat mode
+ * Launch Goose: classic TUI mode (`goose session`) or rossii chat mode
  * (`goose acp` + own TUI).
  *
  * Classic mode always uses `goose session` (never `goose run --recipe`).
@@ -16,7 +16,7 @@
  * Git worktree integration (both modes):
  * - New sessions create a git worktree (<repo-root>/.worktree/<name>) and launch Goose there
  * - Resuming existing sessions check for an existing worktree and launch there if found
- * - Skips worktree creation if not in a git repo or CGOOSE_NO_WORKTREE=1 is set
+ * - Skips worktree creation if not in a git repo or ROSSII_NO_WORKTREE=1 is set
  */
 
 import { execSync, spawn } from "node:child_process";
@@ -27,11 +27,11 @@ import pc from "picocolors";
 import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
-import { readCgooseConfig, getSessionSet } from "./cgoose-config";
-import type { SessionSet } from "./cgoose-config";
+import { readRossiiConfig, getSessionSet } from "./rossii-config";
+import type { SessionSet } from "./rossii-config";
 import { buildExtensionArgs } from "./goose-extensions";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
-import { getCurrentDirName, generateSessionName } from "./utils";
+import { env, hasEnv, setEnv, getCurrentDirName, generateSessionName } from "./utils";
 import { runAcpChat } from "./acp/chat";
 
 /**
@@ -75,15 +75,15 @@ export function prepareLaunch(
 
   // ─── Git worktree setup ────────────────────────────────────────────────
   let worktreePath: string | null = null;
-  const forceWorktree = process.env.CGOOSE_FORCE_WORKTREE === "1";
+  const forceWorktree = env("FORCE_WORKTREE") === "1";
 
-  if (!forceWorktree && process.env.CGOOSE_NO_WORKTREE === undefined) {
-    const cgooseConfig = readCgooseConfig();
-    if (cgooseConfig.default_mode === "no-worktree") {
-      process.env.CGOOSE_NO_WORKTREE = "1";
+  if (!forceWorktree && !hasEnv("NO_WORKTREE")) {
+    const rossiiConfig = readRossiiConfig();
+    if (rossiiConfig.default_mode === "no-worktree") {
+      setEnv("NO_WORKTREE", "1");
     }
   }
-  const noWorktree = forceWorktree ? false : process.env.CGOOSE_NO_WORKTREE === "1";
+  const noWorktree = forceWorktree ? false : env("NO_WORKTREE") === "1";
 
   const worktreeName = sessionDisplayName || sessionName || generateSessionName(getCurrentDirName());
 
@@ -268,7 +268,7 @@ export function launchGoose(
   }
 
   printSummary(sessionName, providerInfo, model, prepared, [
-    ...(process.env.CGOOSE_DEBUG === "1"
+    ...(env("DEBUG") === "1"
       ? [`  ${pc.dim("Command:")}  ${pc.dim(`goose ${args.join(" ")}`)}`]
       : []),
   ]);
@@ -357,7 +357,7 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
     : [];
 
   printSummary(opts.sessionName, opts.providerInfo, opts.model, prepared, [
-    ...(process.env.CGOOSE_DEBUG === "1"
+    ...(env("DEBUG") === "1"
       ? [`  ${pc.dim("Command:")}  ${pc.dim("goose acp")}`]
       : []),
   ]);

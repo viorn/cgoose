@@ -1,8 +1,14 @@
 {
-  "name": "cgoose",
-  "version": "2.4.0",
+  "name": "rossii",
+  "version": "3.0.0",
   "description": "An ACP terminal UI for Goose \u2014 chat, live configuration, session sets",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/viorn/rossii.git"
+  },
+  "homepage": "https://github.com/viorn/rossii#readme",
+  "bugs": "https://github.com/viorn/rossii/issues",
   "main": "src/index.ts",
   "scripts": {
     "start": "bun run src/index.ts",

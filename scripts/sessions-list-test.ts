@@ -2,7 +2,7 @@
 /**
  * Regression tests for session listing (src/sessions.ts).
  *
- * The bug this pins: cgoose listed sessions via `goose session list`, which
+ * The bug this pins: rossii listed sessions via `goose session list`, which
  * reports `user` + `scheduled` only, so every `goose acp` session was invisible
  * — to the picker, to auto-resume and to the delete menu. Listing now reads
  * `sessions.db` (types `user`/`scheduled`/`acp`, goose's own ordering by last
@@ -118,7 +118,7 @@ function fixtureSql(): string {
 
 /** Temp `$HOME` with a db (or not) plus a `goose` shim for the CLI fallback. */
 function makeHome(opts: { db?: "fixture" | "broken" } = {}): string {
-  const home = mkdtempSync(join(tmpdir(), "cgoose-sessions-home-"));
+  const home = mkdtempSync(join(tmpdir(), "rossii-sessions-home-"));
   if (opts.db) {
     const dbDir = join(home, ".local/share/goose/sessions");
     mkdirSync(dbDir, { recursive: true });
@@ -252,7 +252,7 @@ checks.push(["an unreadable db falls back instead of throwing", () => {
 }]);
 
 checks.push(["GOOSE_PATH_ROOT moves the data dir", () => {
-  const root = mkdtempSync(join(tmpdir(), "cgoose-goose-root-"));
+  const root = mkdtempSync(join(tmpdir(), "rossii-goose-root-"));
   tracked.push(root);
   const dataDir = join(root, "data/sessions");
   mkdirSync(dataDir, { recursive: true });

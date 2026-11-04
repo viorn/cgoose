@@ -78,7 +78,7 @@ async function main(): Promise<void> {
 
   await setSessionSystemPrompt(client, session.sessionId, {
     mode: "set",
-    key: "cgoose",
+    key: "rossii",
     text: "Always end your replies with the word BANANA.",
   });
   console.log("system prompt set OK");
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   const exts = await listSessionExtensions(client, session.sessionId);
   console.log("extensions:", exts.map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`).join(", "));
 
-  // `_meta.enabledExtensions` is the channel cgoose uses to make the session set
+  // `_meta.enabledExtensions` is the channel rossii uses to make the session set
   // exact (the chat-mode equivalent of `--no-profile`). An EMPTY array must
   // leave only goose's implicit `developer` — anything else means the profile
   // was loaded as well and this goose ignores the field.
@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     ? "⚠ enabledExtensions ignored by this goose — the profile loads alongside the set"
     : "✅ enabledExtensions honoured: the set is exact (no profile leak)");
 
-  // mcpServers (standard ACP field) is the fallback channel: cgoose still sends
+  // mcpServers (standard ACP field) is the fallback channel: rossii still sends
   // it, so a goose that ignores `enabledExtensions` — or a spec with inline env
   // values, which goose's extension API rejects — still gets its servers.
   const mcpSession = await client.newSession({

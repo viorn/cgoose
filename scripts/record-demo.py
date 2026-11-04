@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Record the cgoose chat demo as a cast, then convert it to a GIF with agg.
+"""Record the rossii chat demo as a cast, then convert it to a GIF with agg.
 
 Why not a screen recorder: the chat lives on the alternate screen and repaints
 whole frames, so a plain `script` capture is unusable. Instead this drives a
-real cgoose inside tmux, takes `capture-pane -e` snapshots after each action and
+real rossii inside tmux, takes `capture-pane -e` snapshots after each action and
 writes them into an asciinema v2 `.cast` file (a full repaint per frame), which
 `agg` turns into a GIF.
 
@@ -33,8 +33,8 @@ REPO = Path(__file__).resolve().parent.parent
 WIDTH, HEIGHT = 120, 34
 # Fixed path on purpose: it shows up in the chat header, and a random suffix
 # would end up in the GIF.
-WORKDIR = Path("/tmp/cgoose-demo")
-SESSION = "cgoose-demo"
+WORKDIR = Path("/tmp/rossii-demo")
+SESSION = "rossii-demo"
 SET_A = "zz-demo-a"
 SET_B = "zz-demo-b"
 
@@ -120,7 +120,7 @@ class Cast:
 
 
 def prepare_sets() -> None:
-    sets = Path.home() / ".config" / "cgoose" / "sets"
+    sets = Path.home() / ".config" / "rossii" / "sets"
     sets.mkdir(parents=True, exist_ok=True)
     (sets / f"{SET_A}.yaml").write_text(
         "name: %s\ntitle: Demo Set A\nsystemPrompt: \"You are demo set A.\"\nbuiltins: [developer]\n" % SET_A
@@ -133,18 +133,18 @@ def prepare_sets() -> None:
 
 def cleanup_sets() -> None:
     for name in (SET_A, SET_B):
-        (Path.home() / ".config" / "cgoose" / "sets" / f"{name}.yaml").unlink(missing_ok=True)
+        (Path.home() / ".config" / "rossii" / "sets" / f"{name}.yaml").unlink(missing_ok=True)
 
 
-# The set picker lists everything in ~/.config/cgoose/sets, and the GIF is
+# The set picker lists everything in ~/.config/rossii/sets, and the GIF is
 # published — so the user's own sets are moved aside for the recording and put
 # back afterwards (including on failure).
-STASH = Path("/tmp/cgoose-demo-sets-stash")
+STASH = Path("/tmp/rossii-demo-sets-stash")
 
 
 def stash_other_sets() -> None:
     STASH.mkdir(parents=True, exist_ok=True)
-    for path in (Path.home() / ".config" / "cgoose" / "sets").iterdir():
+    for path in (Path.home() / ".config" / "rossii" / "sets").iterdir():
         if path.suffix in {".yaml", ".yml", ".json"}:
             shutil.move(str(path), str(STASH / path.name))
 
@@ -152,27 +152,27 @@ def stash_other_sets() -> None:
 def restore_other_sets() -> None:
     if not STASH.exists():
         return
-    sets = Path.home() / ".config" / "cgoose" / "sets"
+    sets = Path.home() / ".config" / "rossii" / "sets"
     for path in STASH.iterdir():
         shutil.move(str(path), str(sets / path.name))
     shutil.rmtree(STASH, ignore_errors=True)
 
 
 def cleanup_session(workdir: Path) -> None:
-    """The demo session is real (it has to be — `cgoose a` resumes it)."""
+    """The demo session is real (it has to be — `rossii a` resumes it)."""
     db = Path.home() / ".local/share/goose/sessions/sessions.db"
     if shutil.which("sqlite3") and db.exists():
         sh("sqlite3", str(db),
            f"delete from messages where session_id in (select id from sessions where working_dir='{workdir}');"
            f"delete from sessions where working_dir='{workdir}';")
-    for meta in (Path.home() / ".config/cgoose/projects").glob(f"{workdir.name}-*.json"):
+    for meta in (Path.home() / ".config/rossii/projects").glob(f"{workdir.name}-*.json"):
         meta.unlink(missing_ok=True)
 
 
 def create_session(workdir: Path) -> None:
     """Create one session in the demo directory (the wizard, no model calls)."""
     tmux("new-session", "-d", "-s", SESSION, "-x", str(WIDTH), "-y", str(HEIGHT),
-         f"cd {workdir} && CGOOSE_NO_WORKTREE=1 bun {REPO / 'src/index.ts'}")
+         f"cd {workdir} && ROSSII_NO_WORKTREE=1 bun {REPO / 'src/index.ts'}")
     time.sleep(3)
     send("Enter")  # create new session
     time.sleep(2.5)
@@ -196,7 +196,7 @@ def create_session(workdir: Path) -> None:
 def record(workdir: Path, duration: float, prompt: bool) -> Cast:
     cast = Cast()
     tmux("new-session", "-d", "-s", SESSION, "-x", str(WIDTH), "-y", str(HEIGHT),
-         f"cd {workdir} && CGOOSE_NO_WORKTREE=1 bun {REPO / 'src/index.ts'} a")
+         f"cd {workdir} && ROSSII_NO_WORKTREE=1 bun {REPO / 'src/index.ts'} a")
     time.sleep(9)  # agent spawn + session load
     cast.frame(duration)
 

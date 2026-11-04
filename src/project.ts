@@ -6,10 +6,21 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { env } from "./utils";
 
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
-const CGOOSE_PROJECTS_DIR = join(homedir(), ".config", "cgoose", "projects");
+/**
+ * Same rule as the sets/config directory (see rossii-config.ts): the old
+ * `~/.config/cgoose/projects` is used only while the new one does not exist.
+ */
+const ROSSII_PROJECTS_DIR = (() => {
+  const override = env("PROJECTS_DIR");
+  if (override) return override;
+  const current = join(homedir(), ".config", "rossii", "projects");
+  const legacy = join(homedir(), ".config", "cgoose", "projects");
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+})();
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -22,7 +33,7 @@ export interface ProjectMeta {
   recipeHistory: string[];
   /** History of session sets used in this project (first = last used; "" = none) */
   setHistory: string[];
-  /** Maps session name → worktree path (created via cgoose git worktree integration) */
+  /** Maps session name → worktree path (created via rossii git worktree integration) */
   worktrees?: Record<string, string>;
 }
 
@@ -36,7 +47,7 @@ function getProjectKey(): string {
 }
 
 function getProjectMetaPath(): string {
-  return join(CGOOSE_PROJECTS_DIR, `${getProjectKey()}.json`);
+  return join(ROSSII_PROJECTS_DIR, `${getProjectKey()}.json`);
 }
 
 // ─── Read / Write ────────────────────────────────────────────────────────────
@@ -79,7 +90,7 @@ export function readProjectMeta(): ProjectMeta | null {
  * existing project files but is no longer actively tracked.
  */
 export function writeProjectMeta(provider: string, model: string, sessionSet?: string): void {
-  const dir = CGOOSE_PROJECTS_DIR;
+  const dir = ROSSII_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = getProjectMetaPath();
 
@@ -120,7 +131,7 @@ export function writeProjectMeta(provider: string, model: string, sessionSet?: s
 
 /** Save a session-to-worktree mapping in the project meta */
 export function saveWorktreeMapping(sessionName: string, worktreePath: string): void {
-  const dir = CGOOSE_PROJECTS_DIR;
+  const dir = ROSSII_PROJECTS_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = getProjectMetaPath();
 

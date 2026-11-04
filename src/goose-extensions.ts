@@ -1,7 +1,7 @@
 /**
  * Read extensions declared in ~/.config/goose/config.yaml.
  *
- * cgoose sets launch Goose with `--no-profile`, which means the extensions from
+ * rossii sets launch Goose with `--no-profile`, which means the extensions from
  * the default profile are NOT loaded. To make a set able to use extensions that
  * are already configured in Goose (e.g. `fetch` = `uvx mcp-server-fetch`), a set
  * can reference them by name (`extensions: [fetch]`) and we translate those

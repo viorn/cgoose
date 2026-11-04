@@ -5,21 +5,21 @@
  * for a long time — so the chat runs two independent guards instead of one
  * wall-clock timer on the whole request:
  *
- *  - **idle** (`CGOOSE_ACP_IDLE_TIMEOUT_MS`, default 5 min): no `session/update`
+ *  - **idle** (`ROSSII_ACP_IDLE_TIMEOUT_MS`, default 5 min): no `session/update`
  *    from the agent for this long → the turn is cancelled with `session/cancel`.
  *    A long but *live* turn is never interrupted.
- *  - **hard** (`CGOOSE_ACP_PROMPT_TIMEOUT_MS`, default 4 h): absolute cap on a
+ *  - **hard** (`ROSSII_ACP_PROMPT_TIMEOUT_MS`, default 4 h): absolute cap on a
  *    single turn — the last resort against an agent that keeps streaming
  *    updates forever without finishing. Passing it to `AcpClient.prompt` also
  *    makes the client send `session/cancel` on timeout.
  *
  * For both, an explicit `0` disables the guard. A malformed value (e.g. a typo
- * like `CGOOSE_ACP_IDLE_TIMEOUT_MS=5m`) falls back to the default **and returns
+ * like `ROSSII_ACP_IDLE_TIMEOUT_MS=5m`) falls back to the default **and returns
  * a warning** — the chat shows it, instead of silently disabling the guard.
  */
 
-export const IDLE_TIMEOUT_ENV = "CGOOSE_ACP_IDLE_TIMEOUT_MS";
-export const TURN_TIMEOUT_ENV = "CGOOSE_ACP_PROMPT_TIMEOUT_MS";
+export const IDLE_TIMEOUT_ENV = "ROSSII_ACP_IDLE_TIMEOUT_MS";
+export const TURN_TIMEOUT_ENV = "ROSSII_ACP_PROMPT_TIMEOUT_MS";
 
 /** Silence from the agent after which the current turn is cancelled. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# install.sh — Install cgoose locally (requires bun)
+# install.sh — Install rossii locally (requires bun)
 #
-# Installs cgoose for the current user:
-#   ~/.local/lib/cgoose/      — source code + dependencies
-#   ~/.local/bin/cgoose       — launcher script (runs via bun)
+# Installs rossii for the current user:
+#   ~/.local/lib/rossii/      — source code + dependencies
+#   ~/.local/bin/rossii       — launcher script (runs via bun)
 #
 # Make sure ~/.local/bin is in your PATH:
 #   export PATH="$HOME/.local/bin:$PATH"
@@ -15,11 +15,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_DIR="${HOME}/.local/lib/cgoose"
+INSTALL_DIR="${HOME}/.local/lib/rossii"
 BIN_DIR="${HOME}/.local/bin"
-LAUNCHER="${BIN_DIR}/cgoose"
+LAUNCHER="${BIN_DIR}/rossii"
 
-echo "==> Installing cgoose to ${INSTALL_DIR}"
+echo "==> Installing rossii to ${INSTALL_DIR}"
 
 # Create directories
 mkdir -p "${INSTALL_DIR}"
@@ -50,4 +50,4 @@ echo ""
 echo "  Make sure ${BIN_DIR} is in your PATH:"
 echo "    export PATH=\"\${HOME}/.local/bin:\$PATH\""
 echo ""
-echo "  Then run: cgoose"
+echo "  Then run: rossii"

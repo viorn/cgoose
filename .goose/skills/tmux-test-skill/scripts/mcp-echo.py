@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal MCP stdio server for cgoose/goose live tests.
+"""Minimal MCP stdio server for rossii/goose live tests.
 
 goose 1.57 starts the handshake with `server/discover` (MCP draft 2026-07-28)
 and only falls back to `initialize` for older peers. A server that answers

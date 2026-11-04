@@ -2,7 +2,7 @@
  * Applying the wizard's provider/model to an ACP session.
  *
  * `session/new` resolves the provider and model from the agent's own config
- * (`GOOSE_PROVIDER`/`GOOSE_MODEL` env for cgoose), and `session/load` ignores
+ * (`GOOSE_PROVIDER`/`GOOSE_MODEL` env for rossii), and `session/load` ignores
  * both, keeping whatever the session row says. The ACP-native way to pin them is
  * the `session/set_config_option` request ("SACP 11"), which goose implements for
  * `provider`, `model`, `mode` and `thinking_effort` and persists into
