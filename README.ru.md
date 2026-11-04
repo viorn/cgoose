@@ -56,7 +56,16 @@ CLI Goose работает, но каждая сессия начинается 
 
 ## Установка
 
-### Вариант 1: standalone бинарник (не требует рантайма)
+### Вариант 1: одной строкой — последний релиз (не требует рантайма)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/viorn/rossii/main/install-release.sh | sh
+```
+
+Скачивает свежий релиз с GitHub, проверяет SHA-256 и ставит бинарник в `~/.local/bin/rossii`.
+Закрепить версию или каталог: `sh -s -- --version v3.0.0 --dir /usr/local/bin`; остальное — `--help`.
+
+### Вариант 2: standalone бинарник (не требует рантайма)
 
 ```bash
 bash build.sh
@@ -65,7 +74,7 @@ bash build.sh
 
 **Bun** нужен только для сборки; готовый бинарник запускается на любом Linux x86_64 без Bun.
 
-### Вариант 2: локальная установка (требует Bun)
+### Вариант 3: локальная установка (требует Bun)
 
 ```bash
 bash install.sh
@@ -75,7 +84,7 @@ rossii
 Ставит исходники + зависимости в `~/.local/lib/rossii/` и лаунчер в `~/.local/bin/rossii`
 (проверьте, что `~/.local/bin` в `PATH`).
 
-### Вариант 3: запуск из исходников (требует Bun)
+### Вариант 4: запуск из исходников (требует Bun)
 
 ```bash
 bun install
@@ -339,6 +348,7 @@ bun run acp:smoke # AcpClient без TUI
 |--------|------------|
 | `build.sh` | собирает standalone-бинарник (`./rossii`) со встроенным рантаймом Bun |
 | `install.sh` | ставит исходники в `~/.local/lib/rossii/` и лаунчер в `~/.local/bin/rossii` |
+| `install-release.sh` | ставит бинарник последнего релиза в `~/.local/bin/rossii` — его и запускает curl-однострочник |
 
 Интерфейсов тут два: чат рисуется на [pi-tui](https://github.com/earendil-works/pi-tui), визард
 настройки по-прежнему использует промпты [Clack](https://github.com/natemoo-re/clack).

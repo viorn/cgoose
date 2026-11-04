@@ -57,7 +57,17 @@ session is running, changing any of that means restarting it.
 
 ## Installation
 
-### Option 1: Standalone binary (no runtime needed)
+### Option 1: One-liner — the latest release (no runtime needed)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/viorn/rossii/main/install-release.sh | sh
+```
+
+Fetches the newest GitHub release, checks its SHA-256 and installs the binary to
+`~/.local/bin/rossii`. Pin a tag or a target directory with
+`sh -s -- --version v3.0.0 --dir /usr/local/bin`; `--help` shows the rest.
+
+### Option 2: Standalone binary (no runtime needed)
 
 ```bash
 bash build.sh
@@ -66,7 +76,7 @@ bash build.sh
 
 Requires **Bun** to build; the resulting binary runs on any Linux x86_64 without Bun.
 
-### Option 2: Local install (requires Bun)
+### Option 3: Local install (requires Bun)
 
 ```bash
 bash install.sh
@@ -76,7 +86,7 @@ rossii
 Installs source + deps to `~/.local/lib/rossii/` and a launcher to `~/.local/bin/rossii`
 (make sure `~/.local/bin` is in `PATH`).
 
-### Option 3: Run from source (requires Bun)
+### Option 4: Run from source (requires Bun)
 
 ```bash
 bun install
@@ -342,6 +352,7 @@ The probe scripts under `scripts/acp-*-probe.ts` (config options, config surface
 |--------|--------------|
 | `build.sh` | compiles a standalone binary (`./rossii`) with the Bun runtime embedded |
 | `install.sh` | installs source to `~/.local/lib/rossii/` and a launcher to `~/.local/bin/rossii` |
+| `install-release.sh` | installs the latest release binary to `~/.local/bin/rossii` — what the curl one-liner runs |
 
 Two UI toolkits meet here: the chat renders with [pi-tui](https://github.com/earendil-works/pi-tui),
 the setup wizard still uses [Clack](https://github.com/natemoo-re/clack) prompts.
