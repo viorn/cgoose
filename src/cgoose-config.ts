@@ -126,6 +126,10 @@ function getSetFilePath(name: string): { path: string; ext: string } | undefined
 /**
  * Read a session set file in any supported format (JSON or YAML).
  * Returns parsed SessionSet or undefined on failure.
+ *
+ * `name` is optional in the file: hand-written YAML (the shape shown in the
+ * docs) usually omits it, and the file name is the canonical slug, so it is
+ * used as the fallback.
  */
 function readSetFile(filePath: string): SessionSet | undefined {
   try {
@@ -140,10 +144,13 @@ function readSetFile(filePath: string): SessionSet | undefined {
       data = yamlLoad(raw);
     }
 
-    if (data && typeof data === "object" && data.name) {
+    const fallbackName = parse(filePath).name;
+    if (data && typeof data === "object") {
+      const name = typeof data.name === "string" && data.name ? data.name : fallbackName;
+      if (!name) return undefined;
       // Normalize: YAML may use camelCase or snake_case variants
       return {
-        name: data.name,
+        name,
         title: data.title ?? data.name,
         description: data.description ?? undefined,
         systemPrompt: data.systemPrompt ?? data.system_prompt ?? "",

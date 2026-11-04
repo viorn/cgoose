@@ -74,9 +74,10 @@ async function main(): Promise<void> {
   const exts = await listSessionExtensions(client, session.sessionId);
   console.log("extensions:", exts.map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`).join(", "));
 
-  // `_meta.goose.enabledExtensions` is a goose-specific channel that cgoose no
-  // longer uses (1.57 ignores it, and newer versions could double-register).
-  // Keep it as an informational probe of the installed goose.
+  // `_meta.enabledExtensions` is the channel cgoose uses to make the session set
+  // exact (the chat-mode equivalent of `--no-profile`). An EMPTY array must
+  // leave only goose's implicit `developer` — anything else means the profile
+  // was loaded as well and this goose ignores the field.
   const constrained = await client.newSession({
     cwd: process.cwd(),
     mcpServers: [],
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
       goose: {
         client: "cgoose",
         sessionTitle: "acp-client-smoke-ext",
-        enabledExtensions: [{ type: "builtin", name: "developer" }],
+        enabledExtensions: [],
       },
     },
   });
@@ -92,14 +93,15 @@ async function main(): Promise<void> {
   const enabledNames = constrainedExts
     .filter((e: any) => e.enabled !== false)
     .map((e) => `${e.extension.type}:${(e.extension as any).name ?? (e.extension as any).server?.name}`);
-  console.log("constrained session extensions:", enabledNames.join(", ") || "(none)");
-  const hasDeveloper = enabledNames.some((n: string) => n === "builtin:developer");
-  console.log(hasDeveloper
-    ? "ℹ enabledExtensions honoured by this goose (cgoose does not rely on it)"
-    : "ℹ enabledExtensions ignored by this goose (expected on 1.57)");
+  console.log("empty enabledExtensions session extensions:", enabledNames.join(", ") || "(none)");
+  const profileLeaked = enabledNames.some((n: string) => n !== "platform:developer" && n !== "builtin:developer");
+  console.log(profileLeaked
+    ? "⚠ enabledExtensions ignored by this goose — the profile loads alongside the set"
+    : "✅ enabledExtensions honoured: the set is exact (no profile leak)");
 
-  // mcpServers (standard ACP field) is the channel cgoose uses for stdio/http
-  // extensions — this one must actually reach the session.
+  // mcpServers (standard ACP field) is the fallback channel: cgoose still sends
+  // it, so a goose that ignores `enabledExtensions` — or a spec with inline env
+  // values, which goose's extension API rejects — still gets its servers.
   const mcpSession = await client.newSession({
     cwd: process.cwd(),
     mcpServers: [

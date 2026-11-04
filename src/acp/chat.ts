@@ -8,10 +8,17 @@
  *
  * Session sets in chat mode:
  *   - builtins → `goose acp --with-builtin …` on the agent command line
- *   - stdio/http extensions → standard ACP `session/new.mcpServers`
+ *   - `_meta.enabledExtensions` (typed `GooseExtension[]`) → REPLACES the
+ *     profile's extensions, i.e. the `--no-profile` semantics of classic mode
+ *     (empty array = no profile; `{type:"mcp", server}` carries MCP servers)
+ *   - stdio/http extensions are ALSO sent in `session/new.mcpServers`: goose
+ *     ignores that field only when `enabledExtensions` is honoured, so old
+ *     versions keep working
+ *   - resume: `session/load` ignores both channels, so the loaded set is
+ *     reconciled with `_goose/unstable/session/extensions/{list,add,remove}`
  *   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
- * On goose 1.57 the default profile is always loaded (`goose acp` has no
- * `--no-profile`), so set extensions are additive to it — the chat says so.
+ * The old blanket "profile is always loaded" warning is gone: the chat checks
+ * the session's real extension list and warns only when the profile leaked in.
  * Two watchdogs bound a turn (idle + hard cap, see ./timeouts.ts).
  * On resume Goose restores the stored extension set; the *current* set's prompt
  * is re-applied (or explicitly cleared when no set).
@@ -21,7 +28,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import pc from "picocolors";
 
-import { buildMcpServers } from "./extensions";
+import { buildMcpServers, diffExtensions, extensionName, listedExtensionName, planGooseExtensions } from "./extensions";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_TURN_TIMEOUT_MS,
@@ -49,9 +56,15 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { AcpClient } from "./client";
-import { setSessionSystemPrompt } from "./custom";
+import {
+  addSessionExtension,
+  listSessionExtensions,
+  removeSessionExtension,
+  setSessionSystemPrompt,
+} from "./custom";
 import type { SessionSet } from "../cgoose-config";
 import type {
+  GooseExtension,
   PromptResponse,
   RequestPermissionResponse,
   SessionNotification,
@@ -217,6 +230,125 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // it again (see the input listener).
   let escArmedExit = false;
   let exitHintShown = false;
+
+  // ─── Extension set ────────────────────────────────────────────────────────
+
+  // Chat mode has no `--no-profile` flag, but goose's `_meta.enabledExtensions`
+  // REPLACES the profile's extension list — an empty array therefore means
+  // "no extensions at all", exactly like classic `--no-profile`. The Default
+  // set opts out and lets goose load its profile.
+  const plan = planGooseExtensions({
+    builtins: opts.agentBuiltins,
+    stdio: opts.stdioExtensionSpecs,
+    http: opts.httpExtensionUris,
+  });
+  // Sent as well: goose ignores `mcpServers` only when it honours the typed
+  // list, so older versions still receive the set's servers (additively).
+  const mcpServers = buildMcpServers({
+    stdio: opts.stdioExtensionSpecs,
+    http: opts.httpExtensionUris,
+  });
+  // A spec with inline env values cannot be expressed through goose's extension
+  // API, so such a set falls back to the additive behaviour.
+  const exactSet = !opts.useDefaultProfile && plan.unsupported.length === 0;
+  const extensionWarnings = new Set<string>();
+
+  /** Extensions the session MUST have (exactly what the set lists). */
+  function requiredExtensions(): GooseExtension[] {
+    return plan.extensions;
+  }
+
+  /** Extensions the session is allowed to have on top. Some goose builds inject
+   *  their own `developer` into an ACP session; it must not be reported as a
+   *  profile leak, removed, or added when a set does not list it. */
+  function allowedExtensionNames(): Set<string> {
+    const allowed = new Set(plan.extensions.map(extensionName));
+    allowed.add("developer");
+    return allowed;
+  }
+
+  function noteExtensionWarning(message: string): void {
+    if (extensionWarnings.has(message)) return;
+    extensionWarnings.add(message);
+    transcript.addChild(new Text(pc.yellow(`⚠ ${message}`), 1, 0));
+    tui.requestRender();
+  }
+
+  /** New session: did the agent actually apply the typed list? A version that
+   *  ignores it loads the profile on top, which is exactly what the old blanket
+   *  warning claimed for every set. Now the claim is checked, not assumed. */
+  async function verifySessionExtensions(id: string): Promise<void> {
+    let actual: Awaited<ReturnType<typeof listSessionExtensions>>;
+    try {
+      actual = await listSessionExtensions(client, id);
+    } catch (error) {
+      noteExtensionWarning(`cannot verify the session extension set: ${String((error as Error)?.message ?? error)}`);
+      return;
+    }
+    const allowed = allowedExtensionNames();
+    const required = new Set(requiredExtensions().map(extensionName));
+    const present = new Set(
+      actual.map(listedExtensionName).filter((name): name is string => name !== null),
+    );
+    const leaked = [...present].filter((name) => !allowed.has(name));
+    const missing = [...required].filter((name) => !present.has(name));
+    if (leaked.length > 0) {
+      noteExtensionWarning(
+        `this goose version ignored "enabledExtensions" — the default profile is loaded too (${leaked.join(", ")})`,
+      );
+    } else if (missing.length > 0) {
+      noteExtensionWarning(`the agent did not load: ${missing.join(", ")}`);
+    }
+  }
+
+  /** Resume: `session/load` restores the extension set stored in the session and
+   *  ignores every extension channel, so the selected set is applied by diffing
+   *  the live list and adding/removing the difference. Classic mode drops the
+   *  extension flags on resume; chat mode makes the set authoritative. */
+  async function reconcileSessionExtensions(id: string): Promise<void> {
+    let actual: Awaited<ReturnType<typeof listSessionExtensions>>;
+    try {
+      actual = await listSessionExtensions(client, id);
+    } catch (error) {
+      noteExtensionWarning(`cannot read the session's extensions: ${String((error as Error)?.message ?? error)}`);
+      return;
+    }
+    // `developer` counts as an expected name so reconciliation never removes it;
+    // it is filtered out of the additions below, because a set that does not
+    // list it must not gain it on resume.
+    const requiredNames = new Set(requiredExtensions().map(extensionName));
+    const expected = [
+      ...[...allowedExtensionNames()].map((name) => ({ type: "builtin" as const, name })),
+    ];
+    const diff = diffExtensions(expected, actual);
+    const add = diff.add.filter((extension) => requiredNames.has(extensionName(extension)));
+    const remove = diff.remove;
+    for (const key of remove) {
+      try {
+        await removeSessionExtension(client, id, key);
+      } catch (error) {
+        noteExtensionWarning(`could not remove extension "${key}": ${String((error as Error)?.message ?? error)}`);
+      }
+    }
+    for (const extension of add) {
+      try {
+        await addSessionExtension(client, id, extension);
+      } catch (error) {
+        noteExtensionWarning(
+          `could not add extension "${extensionName(extension)}": ${String((error as Error)?.message ?? error)}`,
+        );
+      }
+    }
+    if (add.length > 0 || remove.length > 0) {
+      const parts: string[] = [];
+      if (add.length > 0) parts.push(`added ${add.map(extensionName).join(", ")}`);
+      if (remove.length > 0) parts.push(`removed ${remove.join(", ")}`);
+      transcript.addChild(new Text(
+        pc.yellow(`set applied to the resumed session: ${parts.join("; ")}`),
+        1, 0,
+      ));
+    }
+  }
 
   // ─── Agent → client handlers ──────────────────────────────────────────────
 
@@ -752,28 +884,34 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     if (opts.isNew) {
       const response = await client.newSession({
         cwd: opts.cwd,
-        mcpServers: buildMcpServers({
-          stdio: opts.stdioExtensionSpecs,
-          http: opts.httpExtensionUris,
-        }),
+        // Kept as a safety net: goose ignores `mcpServers` only when it honours
+        // `enabledExtensions`, so a version without that support still gets the
+        // set's MCP servers (additively, like before).
+        mcpServers,
+        // goose reads these keys at the TOP level of `_meta` (a nested
+        // `_meta.goose` object is only understood for initialize capabilities).
+        // `client` also marks the session as user-created, which makes it
+        // appear in `goose session list` and resolvable by `--name`.
         _meta: {
-          goose: {
-            client: "cgoose",
-            sessionTitle: opts.sessionTitle,
-            provider: opts.provider,
-          },
+          client: "cgoose",
+          sessionTitle: opts.sessionTitle,
+          provider: opts.provider,
+          ...(exactSet ? { enabledExtensions: plan.extensions } : {}),
         },
       });
       sessionId = response.sessionId;
-      // goose 1.57 has no `--no-profile` for `goose acp` and ignores
-      // `_meta.goose.enabledExtensions`, so the default profile is always
-      // loaded: a set's extensions are added on top of it, not instead of it.
-      if (!opts.useDefaultProfile) {
+      if (exactSet) {
+        await verifySessionExtensions(sessionId);
+      } else if (!opts.useDefaultProfile && plan.unsupported.length > 0) {
         transcript.addChild(new Text(
-          pc.yellow("⚠ This goose version always loads the default profile in chat mode: set extensions are added on top of it."),
+          pc.yellow(
+            "⚠ This set has extensions with inline env values, which goose cannot load through ACP: " +
+            "the default profile is loaded too, and those servers come from `mcpServers`.",
+          ),
           1, 0,
         ));
       }
+      tui.requestRender();
     } else {
       if (!opts.resumeSessionId) throw new Error("resume requires a session id");
       if (!client.supportsLoadSession()) {
@@ -790,6 +928,13 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       closeUser();
       closeMessage();
       closeThought();
+      // `session/load` restores the extension set stored in the session, so the
+      // selected set would be ignored on resume. Reconcile it instead: the set
+      // is the source of truth (classic mode cannot do that — it drops the
+      // extension flags on resume).
+      if (exactSet) {
+        await reconcileSessionExtensions(sessionId);
+      }
       tui.requestRender();
     }
 

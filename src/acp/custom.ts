@@ -1,7 +1,7 @@
 /**
  * Goose custom ACP requests (`_goose/unstable/...`).
  *
- * Method names verified against goose 1.57.0 via scripts/acp-probe.ts and
+ * Method names verified against goose 1.50.0/2.0-rc via scripts/acp-probe.ts and
  * goose source: crates/goose-sdk-types/src/custom_requests.rs.
  * These are version-sensitive — probe before relying on new ones.
  */
@@ -61,7 +61,16 @@ export async function removeSessionExtension(
   sessionId: string,
   extensionKey: string,
 ): Promise<void> {
-  await client.request(GOOSE_METHODS.removeSessionExtension, { sessionId, extensionKey }, 30_000);
+  // Goose versions disagree on the field name: 1.50 wants `extensionKey`,
+  // 2.0-rc accepts `name`. Retry once on a parameter-shape error only, so a
+  // genuine failure ("unknown extension") is not hidden by a second attempt.
+  try {
+    await client.request(GOOSE_METHODS.removeSessionExtension, { sessionId, extensionKey }, 30_000);
+  } catch (error) {
+    const message = String((error as Error)?.message ?? error);
+    if (!/missing field|invalid params/i.test(message)) throw error;
+    await client.request(GOOSE_METHODS.removeSessionExtension, { sessionId, name: extensionKey }, 30_000);
+  }
 }
 
 export async function listSessionExtensions(

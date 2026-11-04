@@ -82,22 +82,24 @@ export interface InitializeResponse {
 export interface NewSessionRequest {
   cwd: string;
   mcpServers?: unknown[];
+  /**
+   * goose reads every session field at the TOP level of `_meta`; only the
+   * initialize capabilities live under `_meta.goose`.
+   */
   _meta?: {
-    goose?: {
-      /** Marks the session as user-created (SessionType::User). */
-      client?: string;
-      /** Client-supplied session name; goose will not regenerate it. */
-      sessionTitle?: string;
-      /** Requested provider (resolved against goose config). */
-      provider?: string;
-      /**
-       * Goose-specific extension list. Ignored by goose 1.57 and not sent by
-       * cgoose (extensions go through `mcpServers` + `--with-builtin`).
-       */
-      enabledExtensions?: GooseExtension[];
-      projectId?: string;
-      [key: string]: unknown;
-    };
+    /** Marks the session as user-created (SessionType::User). */
+    client?: string;
+    /** Client-supplied session name; goose will not regenerate it. */
+    sessionTitle?: string;
+    /** Requested provider (resolved against goose config). */
+    provider?: string;
+    /**
+     * Goose-specific extension list. When present it REPLACES the profile's
+     * extensions (an empty array = none at all); goose ignores `mcpServers`
+     * in that case.
+     */
+    enabledExtensions?: GooseExtension[];
+    projectId?: string;
     [key: string]: unknown;
   };
 }

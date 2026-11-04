@@ -9,9 +9,21 @@
  * `parseStdioSpec` derives the name from the command when the prefix is
  * missing.
  *
- * The ACP `McpServer` objects produced here travel in the standard
- * `session/new.mcpServers` field — the channel verified to work on goose 1.57.
+ * Two channels exist for extensions:
+ *   - `session/new.mcpServers` — the plain ACP field (always accepted, but it
+ *     is IGNORED by goose whenever `_meta.enabledExtensions` is present);
+ *   - `_meta.enabledExtensions` — goose's typed `GooseExtension[]`. When sent,
+ *     it REPLACES the profile's extensions instead of adding to them, which is
+ *     the chat-mode equivalent of `--no-profile`. `planGooseExtensions` builds
+ *     that list and reports the specs it cannot express.
+ *
+ * Inline MCP env values cannot travel through goose's extension API (goose
+ * demands `envKeys` pointing at its own secret store), so a spec carrying
+ * `KEY=value` falls back to the `mcpServers` channel and the caller must keep
+ * the profile loaded.
  */
+
+import type { GooseExtension } from "./types";
 
 // ─── ACP McpServer shapes (subset of the ACP schema) ─────────────────────────
 
@@ -178,5 +190,127 @@ export function buildMcpServers(specs: {
   }
 
   return servers;
+}
+
+// ─── Building `_meta.enabledExtensions` ──────────────────────────────────────
+
+export interface GooseExtensionsPlan {
+  /**
+   * Typed list for `session/new._meta.enabledExtensions`. An EMPTY array is
+   * meaningful: goose then loads no profile extensions at all — the
+   * `--no-profile` semantics. Some builds add their own `developer`; the chat
+   * treats it as allowed and never adds or removes it.
+   */
+  extensions: GooseExtension[];
+  /**
+   * Specs that cannot be expressed in `enabledExtensions` (an stdio spec with
+   * `KEY=value` env assignments). When non-empty the caller must NOT send
+   * `enabledExtensions` — otherwise those servers would silently disappear,
+   * because goose ignores `mcpServers` as soon as the typed list is present.
+   */
+  unsupported: string[];
+}
+
+/** Name an extension is stored under, used for diffs and remove requests. */
+export function extensionName(extension: GooseExtension): string {
+  if (extension.type === "mcp") {
+    const server = extension.server as { name?: string } | undefined;
+    return server?.name ?? "mcp";
+  }
+  return extension.name;
+}
+
+/**
+ * Shape of an entry returned by `_goose/unstable/session/extensions/list`.
+ * Goose versions differ: some return `{extension, extensionKey}`, some a bare
+ * extension object, and `server` is typed loosely in ./types.
+ */
+export interface ListedExtension {
+  extensionKey?: string;
+  name?: string;
+  /** Loose on purpose: `GooseExtension` in ./types types `server` as unknown. */
+  extension?: any;
+}
+
+/** Name of a listed extension entry. */
+export function listedExtensionName(entry: ListedExtension): string | null {
+  if (entry.extensionKey) return entry.extensionKey;
+  const ext = entry.extension;
+  if (ext?.server?.name) return ext.server.name;
+  return ext?.name ?? entry.name ?? null;
+}
+
+/**
+ * Build the `_meta.enabledExtensions` payload for a session set.
+ *
+ * Builtins are sent as `{type:"builtin"}` (goose resolves bundled platform
+ * extensions from the same name space), MCP servers as `{type:"mcp", server}`.
+ * Names are kept unique — a duplicate would make goose replace the earlier
+ * entry silently.
+ */
+export function planGooseExtensions(specs: {
+  builtins?: string[];
+  stdio?: string[];
+  http?: string[];
+}): GooseExtensionsPlan {
+  const used = new Set<string>();
+  const extensions: GooseExtension[] = [];
+  const unsupported: string[] = [];
+
+  for (const name of specs.builtins ?? []) {
+    if (!name || used.has(name)) continue;
+    used.add(name);
+    extensions.push({ type: "builtin", name });
+  }
+
+  for (const spec of specs.stdio ?? []) {
+    const server = parseStdioSpec(spec);
+    if (!server) continue;
+    if (server.env.length > 0) {
+      // goose rejects inline env values in its extension API and would need
+      // them in its secret store; keep the server on the `mcpServers` channel.
+      unsupported.push(spec);
+      continue;
+    }
+    const name = uniqueName(server.name, used);
+    extensions.push({ type: "mcp", server: { ...server, name } });
+  }
+
+  for (const spec of specs.http ?? []) {
+    const server = parseHttpSpec(spec);
+    if (!server) continue;
+    const name = uniqueName(server.name, used);
+    extensions.push({ type: "mcp", server: { ...server, name } });
+  }
+
+  return { extensions, unsupported };
+}
+
+/**
+ * Compare the desired extension list with what a session actually has.
+ *
+ * `expected` must already include the implicit `developer` extension goose
+ * adds when `--with-builtin` is empty, otherwise reconciliation would remove
+ * the agent's only editing tool.
+ */
+export function diffExtensions(
+  expected: GooseExtension[],
+  actual: ListedExtension[],
+): { add: GooseExtension[]; remove: string[] } {
+  const wanted = new Map<string, GooseExtension>();
+  for (const extension of expected) wanted.set(extensionName(extension), extension);
+
+  const present = new Set<string>();
+  for (const entry of actual) {
+    const name = listedExtensionName(entry);
+    if (name) present.add(name);
+  }
+
+  const add = [...wanted.entries()]
+    .filter(([name]) => !present.has(name))
+    .map(([, extension]) => extension);
+  const remove = [...present].filter((name) => !wanted.has(name));
+
+  return { add, remove };
 }
 

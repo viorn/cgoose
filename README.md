@@ -89,17 +89,17 @@ stdioExtensions: ["mcpls --trust-project-config"]     # ad-hoc stdio commands
 - **builtins** passed via `--with-builtin`
 - **extensions** — names of extensions already configured in `~/.config/goose/config.yaml` (e.g. `fetch`, `mcpls`, `sigma`). Each entry is translated to the matching flag: `builtin`/`platform` → `--with-builtin`, `stdio` → `--with-extension "name:cmd args"`, `streamable_http` → `--with-streamable-http-extension <uri>`
 - **stdioExtensions** — raw command lines passed straight to `--with-extension`
-- Sets launch with `--no-profile`: **only** what the set lists is loaded
+- Sets launch with `--no-profile`: **only** what the set lists is loaded (in chat mode the same is achieved with `_meta.enabledExtensions` — an empty array means "no extensions")
 - Creates **consistent, replayable** agent configurations — no recipe YAML complexity
 - Session sets always launch via `goose session`, allowing session history, resume, and forks
 - Sets are discoverable, editable, and deletable via the TUI
 
 #### Set choice: None vs Default vs a set
-- **None** — no extensions at all (`--no-profile` and nothing else): a bare agent without shell/file tools
+- **None** — no extensions at all (`--no-profile` and nothing else): a bare agent without shell/file tools (on goose 1.50 chat mode ends up with no extensions at all; some builds add their own `developer`, which cgoose tolerates)
 - **Default** — leave the profile alone: Goose loads every extension enabled in `~/.config/goose/config.yaml` (classic `goose session` behavior)
 - **&lt;set&gt;** — exactly the builtins/extensions the set lists
 
-Extension flags only apply when a session is **created**. On resume, Goose restores the extension set stored in the session DB and ignores CLI extension flags — how the session was first created wins (the set's system prompt is still re-applied).
+Extension flags only apply when a session is **created**. On resume, Goose restores the extension set stored in the session DB and ignores CLI extension flags — how the session was first created wins (the set's system prompt is still re-applied). In chat mode the extension set is also applied to a resumed session (the loaded list is diffed and reconciled through `_goose/unstable/session/extensions/*`), except when the set carries stdio extensions with inline `KEY=value` env vars: goose only accepts env through `envKeys` pointing at its own secret store, so such a set falls back to loading the profile as well.
 
 #### Prompt on resume
 The selected set is the source of truth for the system prompt. Goose ≥ 1.55 stores `--system` in the session DB (`system_prompt_extras`), so on resume cgoose applies the **current** set's prompt (edit the set → resume → fresh prompt). When **no set** is selected it passes an explicit `--system ""` to clear any previously stored prompt, since omitting the flag would restore the old one.
@@ -166,12 +166,13 @@ The TUI still discovers installed recipes via `goose recipe list --format json`,
 ### Chat Mode (ACP) — default
 - cgoose spawns `goose acp` and renders the dialog itself instead of handing the terminal to Goose's TUI. This is the default; `CGOOSE_ACP_MODE=classic` switches to the classic `goose session` TUI (an unknown value warns and keeps the default)
 - Streaming assistant text, thinking blocks, tool calls and token/cost usage are rendered by cgoose
-- Session sets: builtins via `goose acp --with-builtin`, stdio/HTTP extensions via ACP `mcpServers`, system prompt via `_goose/unstable/session/system-prompt/set`
-- On goose 1.57 `goose acp` has no `--no-profile`, so the default profile always loads — set extensions are **added** to it (the chat warns about this)
+- Session sets: builtins via `goose acp --with-builtin`, the full extension list via `_meta.enabledExtensions` (typed `GooseExtension[]`), stdio/HTTP extensions additionally via ACP `mcpServers`, system prompt via `_goose/unstable/session/system-prompt/set`
+- `_meta.enabledExtensions` **replaces** the profile's extensions, so a set (and None, via an empty array) loads exactly what it lists — the chat-mode equivalent of `--no-profile`. The Default set sends no such field and lets the profile load. On resume `session/load` ignores it, so the loaded list is reconciled with `_goose/unstable/session/extensions/{list,add,remove}`
+- The chat no longer warns that "the profile is always loaded": after creating a session it reads the real extension list and warns only if profile extensions leaked in (a goose version that ignores the field) — `mcpServers` stays in the request as a safety net for exactly that case
 - The chat owns the alternate screen: the transcript (header included) scrolls inside cgoose (mouse wheel, PgUp/PgDn, Ctrl+Shift+F search) while the composer stays pinned, and streamed updates no longer pull the view back to the bottom. On exit the final transcript is printed back to the terminal's normal screen, so it stays in the scrollback. `CGOOSE_CHAT_MAIN_SCREEN=1` restores the old inline renderer (terminal owns scrollback, any repaint pulls the view down while a turn runs)
 - Permissions are shown as a SelectList overlay; Esc/Ctrl+C during a turn cancels it. Esc exits when the prompt is empty (with a draft it arms the exit — press it twice), Ctrl+C always exits
 - Two watchdogs bound a turn: no agent activity for 5 minutes cancels it (`CGOOSE_ACP_IDLE_TIMEOUT_MS`), a single turn is capped at 4 hours (`CGOOSE_ACP_PROMPT_TIMEOUT_MS`)
-- Requires goose ≥ 1.57; otherwise cgoose falls back to the classic `goose session` TUI
+- Requires a goose with the `acp` subcommand (1.50+ verified); without `_meta.enabledExtensions` support the profile loads alongside the set and the chat says so. No `acp` subcommand at all → cgoose falls back to the classic `goose session` TUI
 - Verification: `bun run test` (no goose needed), `bun run acp:probe`, `bun run acp:smoke`
 
 ---

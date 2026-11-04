@@ -51,17 +51,18 @@ stdioExtensions: ["mcpls --trust-project-config"]   # raw --with-extension comma
 - `stdioExtensions` → passed verbatim to `--with-extension` in classic mode; in chat mode the
   `[name:]` prefix is optional and the name is derived from the launcher command
 - Classic mode launches any set (and `None`) with `--no-profile`: only what the set lists is loaded
-- **Chat mode (goose 1.57) cannot do that**: `goose acp` has no `--no-profile`, so the default
-  profile always loads and the set's extensions are added on top of it. The chat prints a warning
-  for every non-Default set
+- Chat mode has no `--no-profile` flag, but `_meta.enabledExtensions` (typed `GooseExtension[]`)
+  **replaces** the profile's list, so the same semantics hold; an empty array means "no extensions"
+  (goose keeps its implicit `developer`). See the chat-mode section below
 - Created/managed via the TUI: **Set → ⚙️ Create new set...** / **Manage sets...**, or manually in `~/.config/cgoose/sets/`
 
 ### "None" vs "Default" vs a set
 
 - **None** (`""`) → classic: `--no-profile` only, a session with **no extensions at all**;
-  chat: cannot hide profile extensions on goose 1.57 (warning shown)
-- **Default** (`__default__` sentinel in `src/launcher.ts`) → no flags at all, so Goose loads the profile from `~/.config/goose/config.yaml`
-- **Set** → classic: exactly the flags derived from the set; chat: the set's extensions plus the profile
+  chat: `_meta.enabledExtensions: []` — no profile and (on 1.50.0) no extensions at all; some builds
+  inject their own `developer`, which cgoose treats as allowed but never adds or removes
+- **Default** (`__default__` sentinel in `src/launcher.ts`) → no flags at all, so Goose loads the profile from `~/.config/goose/config.yaml`; chat sends no `enabledExtensions` at all
+- **Set** → exactly the flags/typed list derived from the set
 
 Extension flags are only effective when a session is **created**. On resume Goose restores the extension list stored in `sessions.extension_data` and ignores CLI extension flags; `setHistory[0]` may hold the `__default__` sentinel.
 
@@ -112,13 +113,25 @@ warns in the TUI and keeps the ACP default.
   transcript back to the normal screen, so scrollback keeps the conversation.
   `CGOOSE_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
   scrollback, so any repaint — spinner, streamed chunk — pulls the view to the bottom)
-- Session sets in chat mode (channels verified on goose 1.57 via `acp-client-smoke`):
-  - builtins → `goose acp --with-builtin <names>` on the agent command line
-  - stdio/streamable-http extensions → standard ACP `mcpServers` on `session/new`
-    (works on 1.57). `_meta.goose.enabledExtensions` is **not** sent: 1.57 ignores it
-    and newer versions could double-register extensions
-  - `goose acp` has no `--no-profile`, so the default profile always loads and set
-    extensions are additive; a warning is printed for any non-Default set
+- Session sets in chat mode (verified live on goose 1.50.0 via the probes described in
+  `plans/acp-mode-review5.md`):
+  - builtins → `goose acp --with-builtin <names>` **and** `{type:"builtin",name}` entries in the
+    typed list (goose dedupes by name)
+  - `session/new._meta.enabledExtensions` (typed `GooseExtension[]`, built by
+    `planGooseExtensions` in `src/acp/extensions.ts`) **replaces** the profile: a set (or `None`
+    with `[]`) loads exactly what it lists — the chat-mode `--no-profile`
+  - MCP servers travel inside that list as `{type:"mcp", server}`; the standard
+    `mcpServers` field is ALSO sent, because goose ignores it only when the typed list is
+    honoured — that is the compatibility channel for versions without support
+  - **inline env (`KEY=value` in a stdio spec) cannot be expressed**: goose wants `envKeys`
+    referencing its own secret store and rejects inline values. A set with such a spec keeps
+    `enabledExtensions` unsent (profile loads additively, `mcpServers` supplies the server)
+    and the chat says so
+  - `session/load` ignores `enabledExtensions`/`mcpServers`; on resume the loaded list is
+    reconciled with `_goose/unstable/session/extensions/{list,add,remove}` (remove's field
+    name differs between versions — `extensionKey` vs `name`, see `src/acp/custom.ts`)
+  - after creating a session the chat reads the real extension list and warns only if profile
+    extensions leaked in (a goose that ignores the field) or expected ones are missing
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
     (`mode: "set"`, key `cgoose`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
@@ -146,12 +159,13 @@ warns in the TUI and keeps the ACP default.
     that long → `session/cancel`; a long but *live* turn is never interrupted
   - `CGOOSE_ACP_PROMPT_TIMEOUT_MS` (default 4 h) — absolute cap on a single turn; on
     timeout the client also sends `session/cancel` and the UI reports the error
-- Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.goose.provider`
-- Requires goose ≥ ~1.57 (`goose acp` + `_goose/unstable/*` methods); `launchGooseAcp`
-  checks `goose acp --help` at startup and falls back to the classic TUI otherwise
+- Provider/model reach the agent via `GOOSE_PROVIDER`/`GOOSE_MODEL` env + `_meta.provider` (top level — goose reads session fields there, only initialize capabilities live under `_meta.goose`); `_meta.sessionTitle` + `_meta.client` name the session and make it a normal `user` session
+- Requires a goose with the `acp` subcommand (1.50.0 verified; `_goose/unstable/*` methods degrade
+  to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
+  back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, no goose needed),
   `bun scripts/acp-probe.ts` (raw protocol) and `bun scripts/acp-client-smoke.ts`
-  (`src/acp/client.ts` without the TUI; checks the `mcpServers` channel)
+  (`src/acp/client.ts` without the TUI; checks the `enabledExtensions` and `mcpServers` channels)
 
 ## Data Paths
 

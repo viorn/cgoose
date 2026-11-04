@@ -257,9 +257,10 @@ export function launchGoose(
     if (sessionName) {
       // Use --session-id, NOT --name: goose resolves --name through
       // SessionStorage::list_sessions(), which only returns user+scheduled
-      // sessions — so sessions created in ACP mode ("not found") can't be
-      // resumed that way. --session-id goes straight to get_session(),
-      // which has no session_type filter.
+      // sessions — sessions created by an ACP client that does not send
+      // `_meta.client` are stored as "acp" and are not found that way.
+      // --session-id goes straight to get_session(), which has no
+      // session_type filter.
       args.push("--session-id", sessionName);
     }
     args.push("--provider", providerInfo.name, "--model", model);

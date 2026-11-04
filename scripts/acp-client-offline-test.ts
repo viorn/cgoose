@@ -17,6 +17,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AcpClient } from "../src/acp/client";
+import { listSessionExtensions, removeSessionExtension } from "../src/acp/custom";
+import { listedExtensionName } from "../src/acp/extensions";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_TURN_TIMEOUT_MS,
@@ -92,6 +94,18 @@ rl.on("line", (line) => {
     }
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
     pendingPrompt = null;
+  } else if (msg.method === "_goose/unstable/session/extensions/list") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { extensions: [{ extension: { type: "platform", name: "developer" }, extensionKey: "developer" }] } });
+  } else if (msg.method === "_goose/unstable/session/extensions/remove") {
+    // Pretend to be a goose that renamed the field: only "name" is accepted,
+    // so the client has to retry after the parameter error.
+    if (msg.params && "extensionKey" in msg.params) {
+      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params", data: "missing field name" } });
+    } else if (msg.params && msg.params.name) {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+    } else {
+      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params" } });
+    }
   } else if (msg.method === "session/cancel") {
     process.stderr.write("cancelled" + String.fromCharCode(10));
     if (pendingPrompt !== null) {
@@ -165,6 +179,13 @@ await client.prompt("s1", [{ type: "text", text: "stderr-split" }], 5_000);
 await new Promise((resolve) => setTimeout(resolve, 100));
 assert.deepEqual(stderr, ["half-line"], "both chunks must arrive as one line");
 console.log("✅ stderr chunks are joined into whole lines");
+
+// The set is reconciled through goose custom requests; the field name of
+// `extensions/remove` differs between goose versions, so it must fall back.
+const listed = await listSessionExtensions(client, "s1");
+assert.deepEqual(listed.map(listedExtensionName), ["developer"]);
+await removeSessionExtension(client, "s1", "todo");
+console.log("✅ extension list parses, remove retries with the other field name");
 
 // A timed-out prompt must reject and cancel the turn at the agent
 await assert.rejects(

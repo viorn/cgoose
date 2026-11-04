@@ -9,11 +9,16 @@ import assert from "node:assert/strict";
 import {
   buildMcpServers,
   commandToName,
+  diffExtensions,
+  extensionName,
   httpToName,
+  listedExtensionName,
   parseHttpSpec,
   parseStdioSpec,
+  planGooseExtensions,
   splitNamePrefix,
 } from "../src/acp/extensions";
+import type { GooseExtension } from "../src/acp/types";
 
 type Check = [name: string, run: () => void];
 
@@ -124,6 +129,82 @@ const checks: Check[] = [
   ["buildMcpServers: empty input", () => {
     assert.deepEqual(buildMcpServers({}), []);
     assert.deepEqual(buildMcpServers({ stdio: [], http: [] }), []);
+  }],
+
+  ["planGooseExtensions: empty set means \"no profile\"", () => {
+    const plan = planGooseExtensions({});
+    assert.deepEqual(plan.extensions, []);
+    assert.deepEqual(plan.unsupported, []);
+    assert.equal(Array.isArray(plan.extensions), true, "an empty array must still be sent");
+  }],
+
+  ["planGooseExtensions: builtins become typed entries", () => {
+    const plan = planGooseExtensions({ builtins: ["developer", "analyze"] });
+    assert.deepEqual(plan.extensions, [
+      { type: "builtin", name: "developer" },
+      { type: "builtin", name: "analyze" },
+    ]);
+  }],
+
+  ["planGooseExtensions: MCP servers travel as {type:\"mcp\"}", () => {
+    const plan = planGooseExtensions({
+      builtins: ["developer"],
+      stdio: ["fetch:uvx mcp-server-fetch"],
+      http: ["https://mcp.example.com/sse"],
+    });
+    assert.deepEqual(plan.extensions.map(extensionName), ["developer", "fetch", "mcp.example.com-sse"]);
+    const mcp = plan.extensions[1] as { type: string; server: { command: string; env: unknown[] } };
+    assert.equal(mcp.type, "mcp");
+    assert.equal(mcp.server.command, "uvx");
+    assert.deepEqual(mcp.server.env, []);
+  }],
+
+  ["planGooseExtensions: inline env is unsupported (falls back to mcpServers)", () => {
+    const plan = planGooseExtensions({
+      builtins: ["developer"],
+      stdio: ["fetch:GITHUB_TOKEN=t0ken uvx mcp-server-fetch"],
+    });
+    assert.deepEqual(plan.extensions, [{ type: "builtin", name: "developer" }]);
+    assert.equal(plan.unsupported.length, 1);
+    assert.match(plan.unsupported[0], /GITHUB_TOKEN/);
+  }],
+
+  ["planGooseExtensions: duplicate names are collapsed", () => {
+    const plan = planGooseExtensions({
+      builtins: ["npx"],
+      stdio: ["npx -y server-a", "npx -y server-b"],
+    });
+    assert.deepEqual(plan.extensions.map(extensionName), ["npx", "npx-2", "npx-3"]);
+  }],
+
+  ["listedExtensionName: version differences", () => {
+    assert.equal(listedExtensionName({ extensionKey: "todo", extension: { name: "todo" } }), "todo");
+    assert.equal(listedExtensionName({ extension: { name: "analyze" } }), "analyze");
+    assert.equal(listedExtensionName({ extension: { server: { name: "fetch" } } }), "fetch");
+    assert.equal(listedExtensionName({ name: "legacy" }), "legacy");
+    assert.equal(listedExtensionName({}), null);
+  }],
+
+  ["diffExtensions: missing and extra extensions", () => {
+    const expected: GooseExtension[] = [
+      { type: "builtin", name: "developer" },
+      { type: "builtin", name: "analyze" },
+      { type: "mcp", server: { type: "stdio", name: "fetch" } },
+    ];
+    const actual = [
+      { extensionKey: "developer", extension: { type: "platform", name: "developer" } },
+      { extensionKey: "todo", extension: { type: "platform", name: "todo" } },
+    ];
+    const { add, remove } = diffExtensions(expected, actual);
+    assert.deepEqual(add.map(extensionName), ["analyze", "fetch"]);
+    assert.deepEqual(remove, ["todo"]);
+  }],
+
+  ["diffExtensions: identical sets are a no-op", () => {
+    const expected: GooseExtension[] = [{ type: "builtin", name: "developer" }];
+    const { add, remove } = diffExtensions(expected, [{ extensionKey: "developer" }]);
+    assert.deepEqual(add, []);
+    assert.deepEqual(remove, []);
   }],
 ];
 
