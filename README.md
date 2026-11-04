@@ -153,8 +153,8 @@ The TUI still discovers installed recipes via `goose recipe list --format json`,
 - Sets `GOOSE_ADDITIONAL_CONFIG_FILES` env var so Goose includes it alongside the main config
 - **Secrets resolution** — any `${VARIABLE}` or `$VARIABLE` references found in `.goose/config.yaml` values are resolved from Goose secrets (system keyring,`~/.config/goose/secrets.yaml`) and injected into the session environment
 
-### Launch
-- Always uses `goose session` (never `goose run --recipe`)
+### Launch (classic mode)
+- Always uses `goose session` (never `goose run --recipe`); chat mode is the default, this path is used with `CGOOSE_ACP_MODE=classic`
 - Sets `OPENAI_BASE_URL` + `OPENAI_API_KEY` for custom providers
 - Clears conflicting env vars (`OPENAI_HOST`, `OPENAI_BASE_PATH`)
 - Sets `GOOSE_CONTEXT_LIMIT` from the provider's JSON model config
@@ -163,8 +163,8 @@ The TUI still discovers installed recipes via `goose recipe list --format json`,
 - Shows set in launch summary if one was selected
 - Spawns `goose session` with `stdio: inherit`, forwards exit code
 
-### Chat Mode (ACP)
-- `-c` (or `ac`, `nc`, `sc`, `mc`, `wc`) launches `goose acp` and renders the dialog inside cgoose instead of handing the terminal to Goose's TUI
+### Chat Mode (ACP) — default
+- cgoose spawns `goose acp` and renders the dialog itself instead of handing the terminal to Goose's TUI. This is the default; `CGOOSE_ACP_MODE=classic` switches to the classic `goose session` TUI (an unknown value warns and keeps the default)
 - Streaming assistant text, thinking blocks, tool calls and token/cost usage are rendered by cgoose
 - Session sets: builtins via `goose acp --with-builtin`, stdio/HTTP extensions via ACP `mcpServers`, system prompt via `_goose/unstable/session/system-prompt/set`
 - On goose 1.57 `goose acp` has no `--no-profile`, so the default profile always loads — set extensions are **added** to it (the chat warns about this)
@@ -224,16 +224,12 @@ Run cgoose with a single-letter mode (like tmux):
 | `wa` | Auto-resume + force worktree |
 | `ws` | Sessions only + force worktree |
 | `wn` | New session + force worktree |
-| `c` | **Chat mode** — full workflow, then the cgoose chat UI on top of `goose acp` |
-| `ac` / `ca` | Chat + auto-resume last session |
-| `nc` / `cn` | Chat + new session with last provider/model/set |
-| `sc` / `cs` | Chat + session picker only |
-| `mc` | Chat + no worktree |
-| `wc` | Chat + force worktree |
 
 When using `a`, `n`, or `s` modes, the last used **set** is also restored alongside provider and model.
 
 If there's no project history for the current directory, the flag is ignored and the full workflow runs.
+
+**Chat (ACP) mode is the default** — every flag above launches the cgoose chat UI on top of `goose acp`. The old chat letters are gone (`c` is no longer a flag); the pairs still work as aliases of their base mode (`mc`→`m`, `ac`/`ca`→`a`, `nc`/`cn`→`n`, `sc`/`cs`→`s`, `wc`→`w`).
 
 ```bash
 cgoose a    # resume last session (with last set, provider, model)
@@ -242,8 +238,8 @@ cgoose s    # pick a session, then launch
 cgoose m    # full workflow, no worktree
 cgoose w    # full workflow, force worktree
 cgoose wa   # auto-resume, force worktree
-cgoose c    # full workflow, then the built-in chat UI (goose acp)
-cgoose ac   # chat + resume the last session
+
+CGOOSE_ACP_MODE=classic cgoose n   # hand the terminal to the classic `goose session` TUI
 ```
 
 ## Scripts

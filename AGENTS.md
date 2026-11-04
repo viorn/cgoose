@@ -11,7 +11,7 @@ cgoose is a TUI wrapper around `goose session` CLI. It launches Goose — it doe
 - Lives in the user's project directory, remembers settings **per directory** (`~/.config/cgoose/projects/<dir>-<hash>.json`)
 - Reads `~/.config/goose/config.yaml` for enabled providers
 - Reads `~/.config/goose/custom_providers/*.json` for custom provider definitions (engine, baseUrl, authToken)
-- **Session sets** (`~/.config/cgoose/sets/<name>.json`) replace recipes as the primary way to bundle a system prompt + builtin extensions. Recipes are still discovered via `goose recipe list --format json` but cgoose always launches via `goose session` (never `goose run --recipe`)
+- **Session sets** (`~/.config/cgoose/sets/<name>.json`) replace recipes as the primary way to bundle a system prompt + builtin extensions. Recipes are still discovered via `goose recipe list --format json` but cgoose launches via `goose acp` (chat mode, default) or `goose session` (`CGOOSE_ACP_MODE=classic`), never `goose run --recipe`
 - Set history tracked per-project (like provider/model history), last used shown at top
 - The selected **set is the source of truth** for the system prompt: on resume the *current* set's prompt is applied, and **None** explicitly clears any stored prompt via `--system ""` (Goose ≥1.55 persists `--system` in the session DB, so omitting the flag would restore the old prompt instead of clearing it)
 - On new session, set's system prompt is passed via `--system`, extensions via `--with-builtin` / `--with-extension` / `--with-streamable-http-extension` + `--no-profile`
@@ -89,13 +89,16 @@ Control:
 - `-w` CLI flag enables worktree
 - Config `~/.config/cgoose/config.json`: `{ "default_mode": "worktree" }` — override default to worktree mode
 
-## Chat Mode (ACP)
+## Chat Mode (ACP) — default renderer
 
-Besides the classic mode (spawning the `goose session` TUI), cgoose has a **chat mode**
-where cgoose itself renders the dialog. It spawns `goose acp` (Agent Client Protocol,
-JSON-RPC 2.0 over stdio) and drives it as an ACP client using `@earendil-works/pi-tui`.
+cgoose itself renders the dialog by default. It spawns `goose acp` (Agent Client
+Protocol, JSON-RPC 2.0 over stdio) and drives it as an ACP client using
+`@earendil-works/pi-tui`. `CGOOSE_ACP_MODE=classic` (or `0`/`off`/`false`/`session`)
+hands the terminal over to the classic `goose session` TUI instead; an unrecognised value
+warns in the TUI and keeps the ACP default.
 
-- CLI flag: `-c` (and pairs `mc` = no worktree, `wc` = force worktree, `ac`/`nc`/`sc`/`ca`/`cn`/`cs`)
+- No chat-specific CLI letters: `c` is gone, and the old pairs are aliases of their
+  base mode (`mc`→`m`, `ac`/`ca`→`a`, `nc`/`cn`→`n`, `sc`/`cs`→`s`, `wc`→`w`)
 - Implementation: `src/acp/` — `client.ts` (transport), `custom.ts` (goose custom
   requests, methods `_goose/unstable/...`), `extensions.ts` (spec → ACP `mcpServers`,
   pure and unit-tested), `chat.ts` (pi-tui based chat UI)

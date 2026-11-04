@@ -19,13 +19,10 @@
  *   me   Edit mode without git worktree isolation
  *   we   Edit mode with worktree forced on
  *
- * Chat mode (cgoose renders the dialog via `goose acp`):
- *   c    Chat mode: full wizard, then the cgoose chat TUI
- *   ac/ca  Chat + quick-resume last session
- *   nc/cn  Chat + new session with last provider/model
- *   sc/cs  Chat + session picker only
- *   mc   Chat without git worktree isolation
- *   wc   Chat with worktree forced on
+ * Chat (ACP) mode is the default: cgoose renders the dialog itself on top of
+ * `goose acp`. Set CGOOSE_ACP_MODE=classic to hand the terminal to the classic
+ * `goose session` TUI instead. The old chat letters (c, ac/ca, nc/cn, sc/cs,
+ * mc, wc) are no longer flags; the pairs still work as aliases of a/n/s/m/w.
  *
  * Entry point. Imports all modules and runs the interactive TUI loop.
  */
@@ -52,6 +49,40 @@ import { getProjectSessionDirs, getRepoWorktreePaths, isInsideGitRepo, removeWor
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type Step = "session" | "session_name" | "set" | "provider" | "model" | "launch";
+
+// ─── Renderer selection ──────────────────────────────────────────────────────
+
+/**
+ * ACP (chat) mode is the default: cgoose spawns `goose acp` and draws the
+ * dialog itself. `CGOOSE_ACP_MODE=classic` switches to the classic
+ * `goose session` TUI; `acp`/`chat` (also 1/on/true) opt in explicitly.
+ * An unrecognised value warns and keeps the default instead of silently
+ * changing how the session is rendered.
+ */
+function resolveChatMode(): boolean {
+  const raw = (process.env.CGOOSE_ACP_MODE ?? "").trim().toLowerCase();
+  if (raw === "") return true;
+  if (["acp", "chat", "1", "on", "true", "yes"].includes(raw)) return true;
+  if (["classic", "session", "0", "off", "false", "no"].includes(raw)) return false;
+  log.warn(pc.yellow(
+    `⚠ CGOOSE_ACP_MODE="${raw}" is not recognised — using ACP (chat) mode. Set "classic" for the goose session TUI.`,
+  ));
+  return true;
+}
+
+/** Old chat-mode letters (the feature is the default now); the pairs remain
+ *  valid as aliases of their base mode so muscle memory keeps working. */
+const LEGACY_CHAT_ALIASES: Record<string, string> = {
+  c: "",
+  mc: "m",
+  wc: "w",
+  ac: "a",
+  ca: "a",
+  nc: "n",
+  cn: "n",
+  sc: "s",
+  cs: "s",
+};
 
 // ─── Session deletion dialog ─────────────────────────────────────────────────
 
@@ -375,13 +406,17 @@ async function main() {
   let lastAllSessions: GooseSession[] = [];
 
   // ─── CLI flags ───────────────────────────────────────────────────────────
-  // Flags are single-letter, tmux-style: `cgoose mn`, `cgoose wc`. Leading
-  // dashes are stripped so `cgoose -mn` works too.
-  const args = process.argv.slice(2).map((a) => a.replace(/^-+/, ""));
+  // Flags are single-letter, tmux-style: `cgoose mn`, `cgoose w`. Leading
+  // dashes are stripped so `cgoose -mn` works too. Legacy chat pairs collapse
+  // to their base mode (mc→m, ac→a, …) — chat itself is the default now.
+  const args = process.argv.slice(2)
+    .map((a) => a.replace(/^-+/, ""))
+    .map((a) => LEGACY_CHAT_ALIASES[a] ?? a)
+    .filter(Boolean);
 
-  // Detect worktree force flag (w, wa, ws, wn, wc) — overrides CGOOSE_NO_WORKTREE
+  // Detect worktree force flag (w, wa, ws, wn) — overrides CGOOSE_NO_WORKTREE
   const forceWorktree = args.includes("w") || args.includes("wa") || args.includes("ws")
-    || args.includes("wn") || args.includes("wc");
+    || args.includes("wn");
   if (forceWorktree) {
     process.env.CGOOSE_FORCE_WORKTREE = "1";
     delete process.env.CGOOSE_NO_WORKTREE;
@@ -390,26 +425,13 @@ async function main() {
   // Detect "fork" mode (e) — edit/fork existing sessions
   const isEditMode = args.includes("e") || args.includes("me") || args.includes("we");
 
-  // Detect chat mode (c) — run `goose acp` and render the dialog ourselves
-  const isChatMode = args.includes("c") || args.includes("mc") || args.includes("wc")
-    || args.includes("ac") || args.includes("nc") || args.includes("sc")
-    || args.includes("ca") || args.includes("cn") || args.includes("cs");
+  // Renderer: ACP chat by default, classic `goose session` TUI on demand.
+  const isChatMode = resolveChatMode();
 
   // Detect "minimal" variants (ma, ms, mn, m) — no worktree, root-only sessions
   let noWorktree = !forceWorktree && (args.includes("m") || args.includes("ma") || args.includes("ms") || args.includes("mn"));
   if (noWorktree) {
     process.env.CGOOSE_NO_WORKTREE = "1";
-  }
-
-  // Chat-mode worktree pairing: mc = no worktree, wc = force worktree
-  if (args.includes("mc")) {
-    process.env.CGOOSE_NO_WORKTREE = "1";
-    noWorktree = true;
-  }
-  if (args.includes("wc")) {
-    process.env.CGOOSE_FORCE_WORKTREE = "1";
-    delete process.env.CGOOSE_NO_WORKTREE;
-    noWorktree = false;
   }
 
   // If no explicit CLI override, check cgoose config for default mode
@@ -425,12 +447,6 @@ async function main() {
   let mode: string;
   if (isEditMode) {
     mode = "edit";
-  } else if (args.includes("ac") || args.includes("ca")) {
-    mode = "auto"; // chat + quick-resume
-  } else if (args.includes("nc") || args.includes("cn")) {
-    mode = "new"; // chat + new session
-  } else if (args.includes("sc") || args.includes("cs")) {
-    mode = "session-only"; // chat + session picker
   } else if (args.includes("wa")) {
     mode = "auto";
   } else if (args.includes("wn")) {
