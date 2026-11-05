@@ -101,7 +101,7 @@ import {
 } from "../config";
 import { fetchModels, type ApiModelInfo } from "../models";
 import { getAllSessions } from "../sessions";
-import { env, formatNumber } from "../utils";
+import { env, formatCharCount, formatNumber } from "../utils";
 import { getProjectSessionDirs, isInsideGitRepo } from "../worktree";
 import { buildExtensionArgs, listGooseExtensions } from "../goose-extensions";
 import { newSessionMeta } from "./session-meta";
@@ -143,6 +143,17 @@ export interface AcpChatOptions {
   stdioExtensionSpecs: string[];
   /** Streamable HTTP extension URIs (`url timeout=N`). */
   httpExtensionUris: string[];
+}
+
+// ─── Labels ──────────────────────────────────────────────────────────────────
+
+/**
+ * Header of a streaming answer. The character count mirrors the thought bar
+ * (`💭 Thought · N chars`), so both live blocks report their size the same way —
+ * and both bars are unstyled, so neither outshines the other.
+ */
+function answerLabel(chars: number): string {
+  return `❮ Answer · ${formatCharCount(chars)} chars`;
 }
 
 // ─── Themes (pi-tui ships no default themes in its public exports) ──────────
@@ -261,6 +272,10 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   let currentMd: Markdown | null = null;
   let currentMessageId: string | null = null;
   let streamBuffer = "";
+  /** Label of the block being streamed (`❮ Answer · N chars`), null when idle. */
+  let answerLabelLine: Text | null = null;
+  /** Characters streamed into that block, counted per chunk (code points). */
+  let answerChars = 0;
   /** Currently streaming thought block (null when idle). */
   let currentThought: ThoughtBlock | null = null;
   /** Every finished thought block of the conversation, for `/think`. */
@@ -648,6 +663,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       currentMd = null;
       streamBuffer = "";
     }
+    answerLabelLine = null;
+    answerChars = 0;
     currentMessageId = null;
   };
 
@@ -712,10 +729,22 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
           if (messageId && messageId !== currentMessageId) closeMessage();
           if (messageId) currentMessageId = messageId;
           if (!currentMd) {
+            // The label rides above the markdown in the same container, so the
+            // streaming block reports its size live (`❮ Answer · N chars`),
+            // exactly like the thought bar.
+            const container = new Container();
+            answerLabelLine = new Text(answerLabel(0), 1, 0);
+            container.addChild(answerLabelLine);
             currentMd = new Markdown("", 1, 0, markdownTheme);
-            transcript.addChild(currentMd);
+            container.addChild(currentMd);
+            transcript.addChild(container);
+            answerChars = 0;
           }
           streamBuffer += update.content.text;
+          // Counted per chunk (`[...s].length` per update): recounting the whole
+          // buffer on every chunk would make a long answer quadratic.
+          answerChars += [...update.content.text].length;
+          answerLabelLine?.setText(answerLabel(answerChars));
           flushStream();
         }
         break;
@@ -1634,6 +1663,8 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     currentMd = null;
     currentMessageId = null;
     streamBuffer = "";
+    answerLabelLine = null;
+    answerChars = 0;
     currentThought = null;
     closeUser();
     toolLines.clear();

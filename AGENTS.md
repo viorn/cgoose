@@ -136,6 +136,12 @@ warns in the TUI and keeps the ACP default.
   record the child geometry `Container.handleMouse` hit-tests with, so a `VStack` there
   re-rendered the whole transcript on every mouse event. Thought repaints share the text
   stream's 50 ms window (`flushThought`) instead of one frame per chunk.
+- Answers: an assistant message is one `Container` — an `❮ Answer · N chars` label followed
+  by the streaming markdown — so the block reports its size live like the thought bar
+  (`formatCharCount` in `src/utils.ts` is shared by both). The count accumulates per chunk
+  (`[...chunk].length`, code points) instead of re-measuring the buffer, which would make a long
+  answer quadratic. A tool call splits the answer (`closeMessage`), and each half then carries
+  its own label and count.
 - Session sets in chat mode (verified live on goose 1.50.0 and 1.57.0 via the probes described in
   `plans/acp-mode-review5.md`):
   - builtins → `goose acp --with-builtin <names>` **and** `{type:"builtin",name}` entries in the

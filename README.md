@@ -110,7 +110,8 @@ bun start
 rossii spawns `goose acp` and drives it as an ACP client. One command resumes a session, picks the
 set/provider/model from the project's history, and keeps everything changeable from inside the chat.
 
-- **Streaming** — assistant text is rendered as it arrives, the thinking block that is streaming is
+- **Streaming** — assistant text is rendered as it arrives under an `❮ Answer · N chars`
+  label that counts the characters received so far, the thinking block that is streaming is
   expanded (and collapses to a `💭 Thought · N chars` bar once the answer starts), so reasoning is
   visible live but stays out of the way afterwards; a left click (or `/think`) opens it again. Tool
   calls and their results are printed inline, and the status bar tracks the current set, context
