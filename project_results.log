@@ -1,23 +1,21 @@
-# project_results.log — rossii, состояние на 2026-11-04 23:10 MSK
+# project_results.log — rossii, состояние на 2026-11-05 10:50 MSK
 
 Репозиторий : /home/vyuyukin/Data/my/sources/cgoose (локальный каталог сохранил старое имя)
 Ветка       : main
-HEAD        : aa2f8c5  release: 3.1.0
+HEAD        : 0036487  release: 3.2.0
 Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoose, редирект работает)
-Релиз       : v3.1.0 — опубликован как latest (не pre-release), assets
-              rossii-3.1.0-linux-x86_64 (83 371 208 Б) + rossii-3.1.0-linux-x86_64.sha256
-              sha256 fefd2d708da5766ccdeabbd4ed62805ca11d105e88646a2c0b82638a5f7721b8
-              https://github.com/viorn/rossii/releases/tag/v3.1.0
-              Предыдущий: v3.0.0 (rossii-3.0.0-linux-x86_64, sha256 ac0feda18a269f0e…)
-Версия      : 3.1.0 (package.json)
-Установлено : ~/.local/bin/rossii ← rossii-3.1.0-linux-x86_64, поставлено однострочником
+Релиз       : v3.2.0 — опубликован как latest (не pre-release), assets
+              rossii-3.2.0-linux-x86_64 (83 375 304 Б) + rossii-3.2.0-linux-x86_64.sha256
+              sha256 3ed931d82cabf2bf6c325ad5598188e317c2f1805f1bac403dada67b6fc3d490
+              https://github.com/viorn/rossii/releases/tag/v3.2.0
+              Предыдущий: v3.1.0 (rossii-3.1.0-linux-x86_64, sha256 fefd2d70…)
+Версия      : 3.2.0 (package.json)
+Установлено : ~/.local/bin/rossii ← rossii-3.2.0-linux-x86_64, поставлено однострочником
               install-release.sh (curl | sh), sha256 совпал с релизным ассетом
-              ~/.local/bin/cgoose — удалён, старый симлинк больше не нужен
 Конфиг      : ~/.config/rossii (перенос из ~/.config/cgoose сделан; fallback-чтение
               старого каталога в коде осталось — для чужих машин)
-Бинарь 3.1.0: 83 371 208 Б против 64 713 568 Б у 3.0.0. Это не код: дерево v3.0.0,
-              собранное локальным bun 1.4.0, даёт те же 83 371 208 Б — так
-              компилирует рантайм, ассет 3.0.0 собран другой версией bun
+Бинарь 3.2.0: 83 375 304 Б против 83 371 208 Б у 3.1.0 (+4 КБ: ThoughtBlock, /think,
+              парсер команд и 27 тестов)
 Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun 1.4.0
 
 ## Коммиты этих циклов
@@ -32,6 +30,37 @@ Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoos
 | 7695f7e | chat: текущий сет в статус-строке |
 | 73272f8 | chat: фильтр во всех меню, а не только в fetch-списке моделей |
 | aa2f8c5 | release: 3.1.0 (package.json, `<asset>.sha256` в build.sh) |
+| 50c51a2 | chat: collapsible thinking blocks, /think to expand/collapse |
+| 0036487 | release: 3.2.0 (package.json, installer help) |
+
+## Что появилось (3.2.0)
+
+- **Сворачиваемые блоки размышлений** (`src/acp/thought.ts`, `ThoughtBlock`).
+  Стриминговый блок размышлений развёрнут — reasoning виден в реальном времени, как
+  и раньше; с началом ответа блок сворачивается в полосу `💭 Thought · N chars`
+  (ручное переключение сильнее автосворачивания: `toggle()`/`setExpanded()`
+  переживает `setFinished()`). Клик по полосе (в alternate screen, где рендерер
+  держит мышь; на `TuiMainScreen` полоса ведёт на `/think expand`) разворачивает
+  блок снова. Счётчик символов — код-поинты, не UTF-16-половинки.
+- **`/think [expand|collapse] [all]`** — новая команда чата: управляет всеми блоками
+  разговора (`all`) или самым свежим (включая стримящийся прямо сейчас); голый
+  `/think` переключает последний. `parseThoughtCommand` — чистая функция,
+  регистронезависима, незнакомое слово отклоняется, а не тихо превращается в toggle.
+- **Блоки закрываются везде, где кончается ход**: при старте ответа
+  (`agent_message_chunk`), в `finishTurn`, при реплее `session/load` (иначе
+  последний блок реплея навсегда оставался «Thinking…» и не попадал в `/think`) и
+  при смерти агента (`onAgentExit`).
+- **Транскрипт остался plain `Container`**: `Stack.render` не записывает геометрию
+  детей, которую `Container.handleMouse` использует для hit-теста — `VStack` там
+  перерисовывал весь транскрипт на каждое событие мыши.
+- **Репейнты размышлений делят окно 50 мс с текстовым стримом** (`flushThought`),
+  а не кадр на каждый чанк; трейлинг-таймер гарантирует отрисовку буфера.
+
+Проверки 3.2.0: `bun run check`, `bun run test` (111 проверок, из них 27 новых в
+`scripts/acp-thought-test.ts` — включая контракты pi-tui: результат `handleMouse`,
+сброс кэша `Markdown.setText`, `truncateToWidth` в пределах ширины), проба
+`bun scripts/acp-client-smoke.ts` чиста; бинарь собран `build.sh` (83 375 304 Б)
+и поставлен однострочником против тега v3.2.0, sha256 совпал.
 
 ## Что появилось (3.1.0)
 
