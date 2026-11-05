@@ -1,21 +1,21 @@
-# project_results.log — rossii, состояние на 2026-11-05 10:50 MSK
+# project_results.log — rossii, состояние на 2026-11-05 16:25 MSK
 
 Репозиторий : /home/vyuyukin/Data/my/sources/cgoose (локальный каталог сохранил старое имя)
 Ветка       : main
-HEAD        : 0036487  release: 3.2.0
+HEAD        : 266eaa3  release: 3.3.0
 Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoose, редирект работает)
-Релиз       : v3.2.0 — опубликован как latest (не pre-release), assets
-              rossii-3.2.0-linux-x86_64 (83 375 304 Б) + rossii-3.2.0-linux-x86_64.sha256
-              sha256 3ed931d82cabf2bf6c325ad5598188e317c2f1805f1bac403dada67b6fc3d490
-              https://github.com/viorn/rossii/releases/tag/v3.2.0
-              Предыдущий: v3.1.0 (rossii-3.1.0-linux-x86_64, sha256 fefd2d70…)
-Версия      : 3.2.0 (package.json)
-Установлено : ~/.local/bin/rossii ← rossii-3.2.0-linux-x86_64, поставлено однострочником
+Релиз       : v3.3.0 — опубликован как latest (не pre-release), assets
+              rossii-3.3.0-linux-x86_64 (83 395 784 Б) + rossii-3.3.0-linux-x86_64.sha256
+              sha256 9177177e96f568e7fa1ffb5afe4fe8ce5f1d6ecca1dd8aa9a0c678c0809a6362
+              https://github.com/viorn/rossii/releases/tag/v3.3.0
+              Предыдущий: v3.2.0 (rossii-3.2.0-linux-x86_64, sha256 3ed931d8…)
+Версия      : 3.3.0 (package.json)
+Установлено : ~/.local/bin/rossii ← rossii-3.3.0-linux-x86_64, поставлено однострочником
               install-release.sh (curl | sh), sha256 совпал с релизным ассетом
 Конфиг      : ~/.config/rossii (перенос из ~/.config/cgoose сделан; fallback-чтение
               старого каталога в коде осталось — для чужих машин)
-Бинарь 3.2.0: 83 375 304 Б против 83 371 208 Б у 3.1.0 (+4 КБ: ThoughtBlock, /think,
-              парсер команд и 27 тестов)
+Бинарь 3.3.0: 83 395 784 Б против 83 375 304 Б у 3.2.0 (+20 КБ: steer.ts, состояние
+              steering в chat.ts, 16 тестов)
 Проверено на: goose 1.57.0, Linux, tmux, sqlite3, bun 1.4.0
 
 ## Коммиты этих циклов
@@ -32,6 +32,63 @@ Remote      : origin = git@github.com:viorn/rossii.git (бывший viorn/cgoos
 | aa2f8c5 | release: 3.1.0 (package.json, `<asset>.sha256` в build.sh) |
 | 50c51a2 | chat: collapsible thinking blocks, /think to expand/collapse |
 | 0036487 | release: 3.2.0 (package.json, installer help) |
+| 1a84728 | chat: steer a running turn instead of a dead composer |
+| 03da7a3 | tests: pin the steering meta parsing and the Enter decision |
+| b26ef2a | docs: steering — adding context to a running turn |
+| 266eaa3 | release: 3.3.0 (package.json, installer help) |
+
+## Что появилось (3.3.0)
+
+- **Steering** (`src/acp/steer.ts`, `steerSession` в `custom.ts`, состояние в
+  `chat.ts`): Enter во время хода больше не упирается в мёртвый композер, а
+  добавляет сообщение в *идущий* ход (`_goose/unstable/session/steer`) — без
+  второго `session/prompt` и без отмены. Раньше единственным способом передать
+  модели контекст был Esc: ход выбрасывался вместе с уже сделанной работой, а
+  новый промпт с нуля перечитывал контекст.
+- **Три состояния строки в транскрипте.** `⤴ steering: …` сразу при отправке →
+  `⤴ steer queued: …` после ack (`session_info_update` →
+  `_meta.goose.queuedSteer`) → настоящая `❯ …` только когда goose вернул
+  `user_message_chunk` с `_meta.goose.steer: true` и тем же `messageId`.
+  «Принято» ≠ «доставлено»: очередь дренится на границе хода (после законченного
+  ответа или результата инструмента), а при завершении/отмене хода goose зовёт
+  `discard_pending_steers` — поэтому корреляция по `messageId` обязательна.
+- **Реплей разговора не путается**: `steerChunkId()` обрабатывается *до* проверки
+  `if (busy) break`, а ответ разрезается на границе доставки
+  (`closeMessage`/`closeThought`), как при вызове инструмента — видно `❮ Answer ·
+  N chars` до steer и новый блок после.
+- **Недоставленный steer не теряется**: `finishTurn`/`onAgentExit` →
+  `abandonPendingSteers()` снимает строку-заглушку, печатает
+  `⚠ steer not delivered (the turn ended)` и возвращает текст в композер
+  (`restoreDraft`, только если композер пуст).
+- **Фоллбеки**: `planSteer()` — чистая функция (`busy`, `runId`,
+  `steerSupported`, `text`) → `steer | queue | command | idle`. Очередь
+  однослотовая (`pendingPrompt`), её добивает `finishTurn`; `classifySteerError()`
+  разбирает `-32601` (старый goose → один раз предупредить и дальше в очередь),
+  `no active run` / несовпадение `expectedRunId` (ход кончился между отправкой и
+  запросом → очередь) и всё прочее (ошибка на экране + текст в композер). Гонка
+  «наш ход кончился, а goose ещё держит run» (`session already has active run`)
+  повторяет `session/prompt` один раз через 700 мс.
+- **Esc остаётся отменой**, но с явной пометкой, что очередь steer'ов погибнет;
+  `/edit` (Ctrl+E) во время хода разрешён и идёт тем же путём, что Enter.
+- **Выключатель `ROSSII_ACP_STEER=0`** — прежнее поведение: Enter во время хода
+  ничего не добавляет. Важное: `Editor` чистит буфер *до* `onSubmit`, поэтому
+  старый `if (busy) return;` молча терял набранный текст — теперь черновик
+  возвращается. Значение вне `0/1` предупреждает, как вотчдоги.
+- **Живые наблюдения 1.57.0**, которых не было в плане: ack может прийти раньше
+  ответа на запрос (держим в `steerAckIds`); `activeRunId: null` может прийти
+  раньше резолва `session/prompt`; сообщение ложится в `sessions.db` с
+  `metadata.steer = true`.
+
+Проверки 3.3.0: `bun run check` чист; `bun run test` — восемь скриптов, 173
+нумерованные проверки (плюс assert'ы `acp-client-offline-test.ts`), из них 16
+новых в `scripts/acp-steer-test.ts`; `bun scripts/acp-steer-probe.ts` на живом
+goose 1.57.0 — `ids match: YES` (проба теперь импортирует парсинг меты из
+`src/acp/steer.ts`, то есть проверяет shipped-код); TUI в tmux: `⤴ steer queued:
+…` во время хода → доставленная строка `❯ STOP counting now…`, ответ
+`STEERED-OK`, `{"steer":true}` в БД; Esc после steer → «не доставлен» и текст в
+композере; `ROSSII_ACP_STEER=0` → подсказка один раз, черновик на месте; Ctrl+E
+во время хода не ломает ни рендер, ни ход; бинарь собран `build.sh`
+(83 395 784 Б) и поставлен однострочником против тега v3.3.0, sha256 совпал.
 
 ## Что появилось (3.2.0)
 
@@ -260,5 +317,21 @@ bun run test    # overlay + расширения + session-meta + session-config
 - classic-режим на resume набор расширений не меняет (в chat-режиме меняет);
 - битые YAML-сеты выпадают молча (кандидат на предупреждение при старте);
 - inline env (`K=V`) в stdio-спеке нельзя выразить через `enabledExtensions`.
+
+По steering (3.3.0) — проверено не всё, список честных хвостов:
+
+- `-32601` (goose без метода) закрыт только юнит-тестом `classifySteerError`:
+  живого прогона против такой сборки не было. Чат всегда спавнит `goose` из PATH
+  (`chat.ts` не передаёт `bin`), так что нужен шим в PATH, отвечающий
+  `method not found` — по образцу фейкового агента из
+  `scripts/acp-client-offline-test.ts`;
+- очередь `pendingPrompt` и гонки (ход начался, но `activeRunId` ещё не пришёл;
+  конец хода между отправкой и доставкой; два steer'а в полёте — они
+  сопоставляются ответам FIFO) вживую не гонялись;
+- steer невозможен, пока открыт диалог разрешения: оверлей владеет клавиатурой
+  (Esc/Ctrl+C отклоняют вызов инструмента);
+- текст в `pendingPrompt` и в композере теряется при выходе из чата — `shutdown()`
+  ничего не восстанавливает;
+- вживую фича проверена на goose 1.57.0 (метод есть и в 1.50.0 — по исходникам).
 
 Подробный отчёт по ACP-конфигурации: `plans/acp-config-surface.md`.
