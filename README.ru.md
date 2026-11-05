@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/viorn/rossii/main/install-release.s
 ```
 
 Скачивает свежий релиз с GitHub, проверяет SHA-256 и ставит бинарник в `~/.local/bin/rossii`.
-Закрепить версию или каталог: `sh -s -- --version v3.2.0 --dir /usr/local/bin`; остальное — `--help`.
+Закрепить версию или каталог: `sh -s -- --version v3.3.0 --dir /usr/local/bin`; остальное — `--help`.
 
 ### Вариант 2: standalone бинарник (не требует рантайма)
 
