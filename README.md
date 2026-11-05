@@ -139,7 +139,14 @@ set/provider/model from the project's history, and keeps everything changeable f
 
 ### Slash commands
 
-Type them into the composer:
+Type `/` on the first line of the composer and the list opens by itself — the chat's commands first,
+then goose's (builtins, your recipes and skills, as goose announces them). `Tab` opens or re-opens it
+after `Esc`, `↑`/`↓` pick, `Enter` applies the pick **and runs it**, `Esc` closes the menu and keeps
+what you typed; typing narrows it (prefix match first, then substring), and a space closes it — `/model `
+has arguments, and this menu completes names. `Tab` on an open menu inserts the command without running
+it.
+
+The menu is a shortcut for typing, not a filter: type the commands out in full any time.
 
 | Command | What it does |
 |---------|--------------|
@@ -151,9 +158,22 @@ Type them into the composer:
 | `/session rename <title>` · `/rename [title]` | Rename (bare command asks in the composer) |
 | `/fork` | Copy the conversation into a new session |
 | `/edit` | Write the prompt in `$VISUAL`/`$EDITOR` — it is sent when the editor closes |
+| `/fetch` | Fetch the model list from the provider's own API (same as `/model fetch`) |
 | `/think [expand\|collapse] [all]` | Expand/collapse thinking blocks (bare `/think` toggles the last one) |
 | `/tool [toggle\|expand\|collapse] [all]` | Expand/collapse tool call blocks (bare `/tool` toggles the last one, `all` covers the conversation) |
 | `/settings` (alias of `/config`) | Same menu as `/config` |
+| `/help` | List the commands — the chat's and goose's |
+
+Anything else that starts with `/` belongs to **goose** and is sent to the agent as an ordinary
+prompt, verbatim, so every command goose itself knows works from the composer: `/compact` (also
+`/summarize`), `/clear`, `/status`, `/doctor`, `/goal <text>`, `/grind`, `/prompts`, `/prompt`,
+`/skills`, and the slash commands goose builds from your recipes and skills. This is what goose's own
+TUI does with a name it does not know, and it is why nothing is validated here — a command the chat
+does not implement is not refused. `/compact` and `/clear` rewrite the conversation goose stores; the
+transcript above is a client-side log and is **not** refreshed by them (goose's ACP server drops the
+history-replaced event), so it stays the pre-command view — the status line's token count is the live
+sign that the context really shrank. A command typed during a turn waits for it (queued, never
+steered: goose only looks for a command in a turn's prompt).
 
 ### Keyboard shortcuts
 
@@ -356,22 +376,38 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | Path | Role |
 |------|------|
 | `src/acp/client.ts` | ACP transport: spawn, JSON-RPC framing, request timeouts, agent→client handlers |
-| `src/acp/chat.ts` | the chat UI: transcript, composer, overlays, slash commands, watchdogs |
+| `src/acp/chat.ts` | chat orchestrator: spawns the agent, builds the `ChatContext`, wires the modules |
+| `src/acp/chat-context.ts` | the chat's shared state, themes, constants and `createChatContext` |
+| `src/acp/chat-ui.ts` | layout, composer, keyboard, watchdogs, shutdown, agent exit |
+| `src/acp/chat-io.ts` | prompt dispatch, steering, `/edit`, the turn lifecycle |
+| `src/acp/chat-stream.ts` | `session/update` rendering: answers, thoughts, tool call blocks |
+| `src/acp/chat-session.ts` | `initialize` + `session/new`\|`session/load` and the `/session` commands |
+| `src/acp/chat-config.ts` | `/config` menus, the `/…` routing (goose's own commands go to the agent) and the model fetch |
+| `src/acp/chat-extensions.ts` | the set's extension plan and its reconciliation against a live session |
+| `src/acp/chat-handlers.ts` | agent→client requests: permission queue, `fs/read_text_file`, `fs/write_text_file` |
 | `src/acp/custom.ts` | Goose's custom `_goose/unstable/*` requests |
 | `src/acp/extensions.ts` | session set → ACP extension list (`planGooseExtensions`, `planProfileExtensions`, diffing) |
 | `src/acp/session-config.ts` | provider/model through `session/set_config_option` |
 | `src/acp/session-meta.ts` | `session/new` `_meta` (session title, client identity, extension list) |
 | `src/acp/steer.ts` | steering a running turn: meta parsing and the Enter/queue decision |
+| `src/acp/slash-commands.ts` | which `/…` is the chat's and which goes to goose (`/compact`, `/clear`, recipes, skills) |
+| `src/acp/command-complete.ts` | the composer's `/…` completion menu: the chat's commands plus goose's announced ones |
 | `src/acp/overlay.ts` | framed and searchable overlay components |
+| `src/acp/thought.ts` | the collapsible thinking block (`/think`) |
+| `src/acp/tool-call-block.ts` | the collapsible tool call block (`/tool`) |
+| `src/acp/tool-call-content.ts` | the wire shapes behind a tool block (content, diffs, live output) |
 | `src/acp/timeouts.ts` | turn watchdogs |
 | `src/launcher.ts` | shared launch preparation (worktree, env, secrets) and the classic mode |
-| `src/index.ts` | CLI flags and the setup wizard |
+| `src/index.ts` | CLI flags, mode resolution and the step loop (a thin `main`) |
+| `src/wizard-steps.ts` | wizard steps 1–5 (session, name, set, provider, model) |
+| `src/wizard-launch.ts` | launch-mode resolution (`a`/`n`/`s`) and the summary/launch step |
+| `src/wizard-sessions.ts` | session deletion and the set create/manage wizards |
 
 ### Development
 
 ```bash
 bun run check     # tsc
-bun run test      # unit tests: extensions, session meta/config, steering, sessions db, client, overlays
+bun run test      # unit tests: extensions, session meta/config, steering, slash commands + their completion, sessions db, client, overlays
 bun run acp:probe # raw ACP session against a real goose
 bun run acp:smoke # AcpClient without the TUI
 ```

@@ -6,7 +6,8 @@
 > The rename is deliberately backward compatible — `ROSSII_*` settings fall back to `CGOOSE_*`
 > (`env()` in `src/utils.ts`), settings are read from `~/.config/rossii` or the old
 > `~/.config/cgoose` when the new one is absent, and a session's system prompt stored under the
-> legacy `cgoose` key is cleared on apply (`applySystemPrompt()` in `src/acp/chat.ts`).
+> legacy `cgoose` key is cleared on apply (`applySystemPrompt()` in
+> `src/acp/chat-extensions.ts`).
 
 ## Overview
 
@@ -39,7 +40,13 @@ The TUI wizard has 6 steps, each with `initialValue` set to the last-used select
 
 Quick modes skip the wizard: `rossii a` (last session in this directory) and `rossii n`
 (new session) go straight to step 6, and in **chat mode they skip the confirmation too** —
-the chat opens immediately (`quickLaunch` in `src/index.ts`). Classic mode still asks.
+the chat opens immediately (`quickLaunch` in `src/wizard-launch.ts`). Classic mode still asks.
+
+Implementation of the wizard: `src/index.ts` is a thin `main()` (CLI flags, worktree /
+renderer resolution, the step loop), `src/wizard-steps.ts` holds steps 1–5 plus
+`resolveChatMode`/`LEGACY_CHAT_ALIASES`, `src/wizard-launch.ts` resolves the CLI launch
+mode and renders the summary, and `src/wizard-sessions.ts` holds the session-deletion
+dialog and the set create/manage wizards.
 
 If no project meta exists yet, first option is selected (None → first provider → first model).
 
@@ -115,7 +122,23 @@ warns in the TUI and keeps the ACP default.
   pure and unit-tested), `session-meta.ts` (`session/new` `_meta`, pure and unit-tested),
   `session-config.ts` (provider/model via `session/set_config_option`, pure planning +
   non-throwing apply, unit-tested), `steer.ts` (steering a running turn: meta parsing and
-  the Enter decision, pure and unit-tested), `chat.ts` (pi-tui based chat UI)
+  the Enter decision, pure and unit-tested), `slash-commands.ts` (which `/…` is the chat's
+  and which is goose's, plus the command list goose announces, pure and unit-tested),
+  `command-complete.ts` (the composer's `/…` completion menu: the chat's commands plus
+  goose's announced ones, pure and unit-tested),
+  `overlay.ts` (framed / searchable lists),
+  `timeouts.ts` (turn watchdogs), `thought.ts` · `tool-call-block.ts` ·
+  `tool-call-content.ts` (the collapsible thinking and tool blocks)
+- The chat itself is one module per responsibility, all sharing a `ChatContext`
+  (`chat-context.ts`: the mutable state, themes, constants, `createChatContext`):
+  `chat.ts` (~120 lines) only orchestrates — spawns `goose acp`, builds the context and
+  wires the rest; `chat-ui.ts` (layout, composer, keyboard, watchdogs, shutdown, agent
+  exit), `chat-io.ts` (prompt dispatch, steering, `/edit`, turn lifecycle),
+  `chat-stream.ts` (`session/update` rendering), `chat-session.ts` (initialize +
+  `session/new`|`session/load`, `/session` commands), `chat-config.ts` (`/config` menus,
+  the model fetch, and the `/…` routing: what rossii does not implement goes to goose),
+  `chat-extensions.ts` (the set's extension plan and its
+  reconciliation), `chat-handlers.ts` (agent→client requests: permissions, fs)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
 - Rendering: the chat owns the **alternate screen** — `TuiAltScreen` with an explicit
@@ -207,6 +230,31 @@ warns in the TUI and keeps the ACP default.
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
     (`mode: "set"`, key `rossii`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
+- **Slash commands** — rossii answers its own (`/config`, `/model`, `/provider`, `/set`,
+  `/session`, `/rename`, `/fork`, `/think`, `/tool`, `/edit`, `/fetch`, `/help`) and sends
+  **everything else that starts with `/` to the agent as a plain prompt**, so goose's own
+  commands work: `/compact`, `/clear`, `/status`, `/doctor`, `/goal`, `/grind`, `/prompts`,
+  `/prompt`, `/skills` and the slash commands goose builds from recipes and skills (see
+  `src/acp/slash-commands.ts`). Nothing is validated against goose's announced list:
+  goose's own TUI forwards an unknown `/…` as a message too (`handle_slash_command` returns
+  `None`), and refusing what the chat cannot know about is what made `/compact` unreachable.
+  goose's `execute_command()` only looks at a turn's *prompt*, so a command typed during a
+  turn is queued, never steered. `available_commands_update` (sent after `session/new`,
+  `session/load` and fork) is kept for `/help`; for `/compact`, `/clear` and `/summarize` a
+  note says goose rewrites its stored conversation and the transcript here is not refreshed
+  (goose's ACP server does not forward `AgentEvent::HistoryReplaced`)
+- **Completing them** — the composer completes `/…` (`src/acp/command-complete.ts`): the
+  editor gets an `AutocompleteProvider`, which pi-tui only has when one is installed
+  (`setupUi` did not, so `/` and Tab were dead keys). It offers the chat's commands
+  (`CHAT_COMMANDS`, the same list `/help` prints) followed by goose's announced ones —
+  builtins, recipes and skills — de-duplicated by name, read lazily per keystroke so
+  goose's list can arrive after the provider is installed. Typing `/` on the first line
+  opens the menu by itself (`isInSlashCommandContext`), Tab opens or re-opens it after Esc,
+  ↑/↓ pick, Esc closes it and keeps the draft (`capturesViewportInput` already hands Esc to
+  the editor), Enter applies **and submits** (`prefix.startsWith("/")` is the editor's own
+  condition for a slash command), Tab applies without submitting. Matching is
+  prefix-then-substring, case-insensitive, names only: `/model ` (with a space) closes the
+  menu. Nothing is gated by it — it is a shortcut for typing, not a filter
 - **Live configuration** — no restart: slash commands typed into the composer
   (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`, `/think`, `/tool`) plus `SelectList`
   overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
@@ -308,7 +356,9 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts`, `steer.ts`, the db-backed session listing, the overlay components and the
+  `session-config.ts`, `steer.ts`, `slash-commands.ts`, `command-complete.ts`, the db-backed
+  session listing, the overlay
+  components and the
   tool-call block + its `tool-call-content.ts` wire mapping — no goose
   needed), `bun scripts/acp-probe.ts`
   (raw protocol), `bun scripts/acp-steer-probe.ts` (steering against a live agent: run id, ack,
