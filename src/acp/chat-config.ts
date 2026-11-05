@@ -3,7 +3,8 @@
  *
  * Functions: showMenu, changeModel, changeProvider, currentProviderConfig,
  * fetchModelsForCurrentProvider, applyFetchedModel, showConfigMenu,
- * showProviderMenu, showModelMenu, showSetMenu, showSessionMenu, handleCommand.
+ * showProviderMenu, showModelMenu, showSetMenu, showSessionMenu,
+ * submitGooseCommand, showCommandsHelp, handleCommand.
  */
 
 import pc from "picocolors";
@@ -16,7 +17,8 @@ import { changeSet, changeSession, newSession, forkCurrentSession, renameCurrent
 import { toggleAllThoughts, toggleAllTools, renderHeader, renderStatus } from "./chat-stream";
 import { persistSelection } from "./chat-extensions";
 import { framed } from "./chat-handlers";
-import { promptInEditor } from "./chat-io";
+import { promptInEditor, queuePrompt, submitPrompt } from "./chat-io";
+import { commandRewritesHistory, formatGooseCommandNames } from "./slash-commands";
 import { SearchableList } from "./overlay";
 import { selectListTheme } from "./chat-context";
 import {
@@ -301,6 +303,57 @@ export function showSessionMenu(ctx: ChatContext): void {
   }, { width: 88, layout: { maxPrimaryColumnWidth: 52 } });
 }
 
+// ─── Slash command handler ───────────────────────────────────────────────────
+
+/**
+ * Run a `/…` that rossii does not implement — it is goose's. The agent's
+ * `execute_command()` is the only thing that can run them (they rewrite the
+ * conversation goose stores or report on it) and it looks at the *prompt* of a
+ * turn, so the text goes out as an ordinary prompt, verbatim; the answer
+ * ("Compaction complete", the status report…) streams back normally.
+ *
+ * Nothing is validated against goose's announced list: goose's own TUI does not
+ * either (an unknown `/…` is submitted as a message), and refusing what the chat
+ * cannot know about is what made `/compact` unreachable in the first place.
+ */
+export function submitGooseCommand(ctx: ChatContext, text: string): void {
+  if (commandRewritesHistory(text)) {
+    // goose replaces its stored conversation and the ACP server drops
+    // `AgentEvent::HistoryReplaced`, so nothing tells the client to redraw: this
+    // transcript stays the pre-command view. Say so rather than pretend the
+    // history refreshed — including when the command only runs after this turn.
+    ctx.transcript.addChild(new Text(
+      pc.dim(`🪿 ${text.trim()} runs on goose's side — the agent's conversation is rewritten, this transcript is not.`),
+      1, 0,
+    ));
+    ctx.tui.requestRender();
+  }
+  if (ctx.busy) {
+    // Queued, never steered: goose only looks for a command in a turn's prompt,
+    // so a `/compact` steered into the running turn would just be text the model
+    // reads mid-turn.
+    queuePrompt(ctx, text);
+    return;
+  }
+  void submitPrompt(ctx, text);
+}
+
+/** `/help` — the commands, since the composer has no completion list. */
+export function showCommandsHelp(ctx: ChatContext): void {
+  ctx.transcript.addChild(new Text(
+    pc.dim("The chat: ") + "/config /model /provider /set /session /rename /fork /think /tool /edit /fetch /help",
+    1, 0,
+  ));
+  ctx.transcript.addChild(new Text(
+    ctx.gooseCommands.length > 0
+      ? pc.dim("goose:    ") + formatGooseCommandNames(ctx.gooseCommands) +
+        pc.dim("  (any other /command goes to the agent too)")
+      : pc.dim("goose also has its own commands (/compact, /clear, /status…) — its list is not here yet, try /help again."),
+    1, 0,
+  ));
+  ctx.tui.requestRender();
+}
+
 export async function handleCommand(ctx: ChatContext, text: string): Promise<void> {
   const [cmd, ...args] = text.slice(1).split(/\s+/);
   switch (cmd) {
@@ -371,12 +424,14 @@ export async function handleCommand(ctx: ChatContext, text: string): Promise<voi
     case "tool":
       toggleAllTools(ctx, args);
       return;
+    case "help":
+      showCommandsHelp(ctx);
+      return;
     default:
-      ctx.transcript.addChild(new Text(
-        pc.yellow(`⚠ Unknown command: ${cmd}. Use /config to open the configuration menu.`),
-        1, 0,
-      ));
-      ctx.tui.requestRender();
+      // Not a command rossii implements → goose's (see ./slash-commands.ts):
+      // `/compact`, `/clear`, `/status`, `/doctor`, `/goal`, …, a recipe or a
+      // skill, or simply a typo goose will treat as text.
+      submitGooseCommand(ctx, text);
       return;
   }
 }

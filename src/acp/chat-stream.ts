@@ -15,6 +15,7 @@ import { parseThoughtCommand } from "./thought";
 import { ToolCallBlock } from "./tool-call-block";
 import { parseToolCommand } from "./tool-call-block";
 import { toolCallPayload, toolDetailFromRawInput } from "./tool-call-content";
+import { parseAvailableCommands } from "./slash-commands";
 import { answerLabel, formatCost, markdownTheme } from "./chat-context";
 import type { ChatContext } from "./chat-context";
 import type { SessionNotification } from "./types";
@@ -284,6 +285,14 @@ export function handleSessionUpdate(ctx: ChatContext, notification: SessionNotif
       if (payload.append !== undefined) block.appendContent(payload.append);
       if (status === "completed" || status === "failed") block.setFinished();
       ctx.tui.requestRender();
+      break;
+    }
+    case "available_commands_update": {
+      // goose's own slash commands (`compact`, `clear`, `status`, … plus the
+      // ones it builds from recipes and skills), sent right after session/new,
+      // session/load and fork. Kept for `/help`; `/…` routing does not depend on
+      // it (see ./slash-commands.ts).
+      ctx.gooseCommands = parseAvailableCommands(update.availableCommands);
       break;
     }
     case "usage_update": {

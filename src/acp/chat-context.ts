@@ -20,6 +20,7 @@ import type { SessionSet } from "../rossii-config";
 import { DEFAULT_PROFILE_SENTINEL } from "../rossii-config";
 import type { ThoughtBlock } from "./thought";
 import type { ToolCallBlock } from "./tool-call-block";
+import type { GooseCommand } from "./slash-commands";
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_TURN_TIMEOUT_MS,
@@ -279,6 +280,15 @@ export interface ChatContext {
   // ── Prompt handlers ──
   awaitingRename: boolean;
 
+  // ── goose's own slash commands (see ./slash-commands.ts) ──
+  /**
+   * What goose announced for this session (`available_commands_update`):
+   * `compact`, `clear`, `status`, … plus the slash commands it builds from
+   * recipes and skills. Shown by `/help`; it does not gate anything — every
+   * `/…` the chat does not implement goes to the agent as a prompt.
+   */
+  gooseCommands: GooseCommand[];
+
   // ── External editor ──
   externalEditorCommand(): string;
 
@@ -390,6 +400,10 @@ export function createChatContext(opts: AcpChatOptions): ChatContext {
 
     // Prompt handlers
     awaitingRename: false,
+
+    // goose's own slash commands (announced by `available_commands_update`;
+    // see ./slash-commands.ts — `/help` shows them, nothing is gated on them)
+    gooseCommands: [],
 
     // Permission queue
     permissionQueue: [],

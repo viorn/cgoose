@@ -148,9 +148,22 @@ rossii запускает `goose acp` и работает как ACP-клиен�
 | `/session rename <title>` · `/rename [title]` | Переименовать (без аргумента — спросит в композере) |
 | `/fork` | Скопировать разговор в новую сессию |
 | `/edit` | Написать запрос в `$VISUAL`/`$EDITOR` — отправится при закрытии редактора |
+| `/fetch` | Получить список моделей из API провайдера (то же, что `/model fetch`) |
 | `/think [expand\|collapse] [all]` | Развернуть/свернуть блоки размышлений (голый `/think` переключает последний) |
 | `/tool [toggle\|expand\|collapse] [all]` | Развернуть/свернуть блоки вызовов инструментов (голый `/tool` переключает последний, `all` — весь разговор) |
 | `/settings` (алиас `/config`) | То же меню, что `/config` |
+| `/help` | Список команд — и своих, и goose |
+
+Всё остальное, что начинается с `/`, принадлежит **goose**: текст уходит агенту обычным промптом,
+дословно, поэтому из композера работают все команды самого goose — `/compact` (и `/summarize`),
+`/clear`, `/status`, `/doctor`, `/goal <текст>`, `/grind`, `/prompts`, `/prompt`, `/skills`, а
+также слэш-команды, которые goose собирает из ваших рецептов и скиллов. Родной TUI goose делает с
+неизвестным именем то же самое, и именно поэтому здесь ничего не проверяется: команда, которую
+чат не реализует, не отклоняется. `/compact` и `/clear` переписывают хранимый goose разговор;
+транскрипт в чате — клиентский лог, он **не** обновляется (ACP-сервер goose не пересылает событие
+о замене истории) и остаётся версией «до команды» — живой признак того, что контекст действительно
+сжался, это счётчик токенов в статусной строке. Команда, набранная во время хода, ждёт его
+(очередь, не steering: goose ищет команду только в промпте хода).
 
 ### Горячие клавиши
 
@@ -357,7 +370,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | `src/acp/chat-io.ts` | отправка промпта, steering, `/edit`, жизненный цикл хода |
 | `src/acp/chat-stream.ts` | рендер `session/update`: ответы, мысли, блоки вызовов инструментов |
 | `src/acp/chat-session.ts` | `initialize` + `session/new`\|`session/load` и команды `/session` |
-| `src/acp/chat-config.ts` | меню `/config` и загрузка списка моделей у провайдера |
+| `src/acp/chat-config.ts` | меню `/config`, маршрутизация `/…` (команды goose уходят агенту) и загрузка списка моделей у провайдера |
 | `src/acp/chat-extensions.ts` | план расширений сета и его сверка с живой сессией |
 | `src/acp/chat-handlers.ts` | запросы agent→client: очередь permission, `fs/read_text_file`, `fs/write_text_file` |
 | `src/acp/custom.ts` | кастомные запросы Goose `_goose/unstable/*` |
@@ -365,6 +378,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | `src/acp/session-config.ts` | провайдер/модель через `session/set_config_option` |
 | `src/acp/session-meta.ts` | `_meta` для `session/new` (имя сессии, идентичность клиента, список расширений) |
 | `src/acp/steer.ts` | steering идущего хода: разбор меты и решение Enter/очередь |
+| `src/acp/slash-commands.ts` | какая `/…` команда чата, а какая уходит goose (`/compact`, `/clear`, рецепты, скиллы) |
 | `src/acp/overlay.ts` | рамные и поисковые оверлеи |
 | `src/acp/thought.ts` | сворачиваемый блок размышлений (`/think`) |
 | `src/acp/tool-call-block.ts` | сворачиваемый блок вызова инструмента (`/tool`) |
@@ -380,7 +394,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 
 ```bash
 bun run check     # tsc
-bun run test      # юнит-тесты: extensions, session meta/config, steering, sessions db, client, overlay
+bun run test      # юнит-тесты: extensions, session meta/config, steering, слэш-команды, sessions db, client, overlay
 bun run acp:probe # сырая ACP-сессия с настоящим goose
 bun run acp:smoke # AcpClient без TUI
 ```

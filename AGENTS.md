@@ -122,7 +122,8 @@ warns in the TUI and keeps the ACP default.
   pure and unit-tested), `session-meta.ts` (`session/new` `_meta`, pure and unit-tested),
   `session-config.ts` (provider/model via `session/set_config_option`, pure planning +
   non-throwing apply, unit-tested), `steer.ts` (steering a running turn: meta parsing and
-  the Enter decision, pure and unit-tested),
+  the Enter decision, pure and unit-tested), `slash-commands.ts` (which `/…` is the chat's
+  and which is goose's, plus the command list goose announces, pure and unit-tested),
   `overlay.ts` (framed / searchable lists),
   `timeouts.ts` (turn watchdogs), `thought.ts` · `tool-call-block.ts` ·
   `tool-call-content.ts` (the collapsible thinking and tool blocks)
@@ -132,8 +133,9 @@ warns in the TUI and keeps the ACP default.
   wires the rest; `chat-ui.ts` (layout, composer, keyboard, watchdogs, shutdown, agent
   exit), `chat-io.ts` (prompt dispatch, steering, `/edit`, turn lifecycle),
   `chat-stream.ts` (`session/update` rendering), `chat-session.ts` (initialize +
-  `session/new`|`session/load`, `/session` commands), `chat-config.ts` (`/config` menus
-  and the model fetch), `chat-extensions.ts` (the set's extension plan and its
+  `session/new`|`session/load`, `/session` commands), `chat-config.ts` (`/config` menus,
+  the model fetch, and the `/…` routing: what rossii does not implement goes to goose),
+  `chat-extensions.ts` (the set's extension plan and its
   reconciliation), `chat-handlers.ts` (agent→client requests: permissions, fs)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
@@ -226,6 +228,19 @@ warns in the TUI and keeps the ACP default.
   - system prompt → goose custom request `_goose/unstable/session/system-prompt/set`
     (`mode: "set"`, key `rossii`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
+- **Slash commands** — rossii answers its own (`/config`, `/model`, `/provider`, `/set`,
+  `/session`, `/rename`, `/fork`, `/think`, `/tool`, `/edit`, `/fetch`, `/help`) and sends
+  **everything else that starts with `/` to the agent as a plain prompt**, so goose's own
+  commands work: `/compact`, `/clear`, `/status`, `/doctor`, `/goal`, `/grind`, `/prompts`,
+  `/prompt`, `/skills` and the slash commands goose builds from recipes and skills (see
+  `src/acp/slash-commands.ts`). Nothing is validated against goose's announced list:
+  goose's own TUI forwards an unknown `/…` as a message too (`handle_slash_command` returns
+  `None`), and refusing what the chat cannot know about is what made `/compact` unreachable.
+  goose's `execute_command()` only looks at a turn's *prompt*, so a command typed during a
+  turn is queued, never steered. `available_commands_update` (sent after `session/new`,
+  `session/load` and fork) is kept for `/help`; for `/compact`, `/clear` and `/summarize` a
+  note says goose rewrites its stored conversation and the transcript here is not refreshed
+  (goose's ACP server does not forward `AgentEvent::HistoryReplaced`)
 - **Live configuration** — no restart: slash commands typed into the composer
   (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`, `/think`, `/tool`) plus `SelectList`
   overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
@@ -327,7 +342,8 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts`, `steer.ts`, the db-backed session listing, the overlay components and the
+  `session-config.ts`, `steer.ts`, `slash-commands.ts`, the db-backed session listing, the overlay
+  components and the
   tool-call block + its `tool-call-content.ts` wire mapping — no goose
   needed), `bun scripts/acp-probe.ts`
   (raw protocol), `bun scripts/acp-steer-probe.ts` (steering against a live agent: run id, ack,
