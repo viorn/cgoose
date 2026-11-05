@@ -35,6 +35,7 @@
  *   /set               → system prompt + extension reconciliation in place
  *   /session           → switch (session/load), new, rename, fork
  *   /rename · /fork    → session title / `session/fork` copy
+ *   /think             → expand/collapse thinking blocks (./thought.ts)
  * Every switch re-applies the pair the wizard chose and reconciles extensions
  * against the selected set, so the set stays the single source of truth.
  */
@@ -105,6 +106,7 @@ import { getProjectSessionDirs, isInsideGitRepo } from "../worktree";
 import { buildExtensionArgs, listGooseExtensions } from "../goose-extensions";
 import { newSessionMeta } from "./session-meta";
 import { applySessionConfig, optionValue, type SessionConfig } from "./session-config";
+import { ThoughtBlock, parseThoughtCommand } from "./thought";
 import type {
   GooseExtension,
   PromptResponse,
@@ -173,12 +175,6 @@ const selectListTheme = {
 const editorTheme = {
   borderColor: (s: string) => pc.cyan(s),
   selectList: selectListTheme,
-};
-
-const dimMarkdownTheme = {
-  ...markdownTheme,
-  heading: (s: string) => pc.dim(s),
-  bold: (s: string) => pc.bold(pc.dim(s)),
 };
 
 // ─── Chat session ────────────────────────────────────────────────────────────
@@ -255,14 +251,20 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   const altScreen = env("CHAT_MAIN_SCREEN") !== "1";
   const tui: TUI = altScreen ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
 
+  // A plain Container, not a VStack: the transcript is not part of the layout
+  // tree (the scroll view hosts a plain document), and `Stack.render` does not
+  // record the child geometry `Container.handleMouse` hit-tests with — a VStack
+  // here made every mouse event re-render the whole transcript.
   const transcript = new Container();
   const statusLine = new Text("", 0, 0);
   const headerLine = new Text("", 1, 0);
   let currentMd: Markdown | null = null;
   let currentMessageId: string | null = null;
   let streamBuffer = "";
-  let thoughtMd: Markdown | null = null;
-  let thoughtBuffer = "";
+  /** Currently streaming thought block (null when idle). */
+  let currentThought: ThoughtBlock | null = null;
+  /** Every finished thought block of the conversation, for `/think`. */
+  const thoughtBlocks: ThoughtBlock[] = [];
   let userLine: Text | null = null;
   let userBuffer = "";
   let userMessageId: string | null = null;
@@ -625,10 +627,10 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
 
   /** Close the current thought block so the next burst renders separately. */
   const closeThought = (): void => {
-    if (thoughtMd) {
-      thoughtMd.setText(thoughtBuffer);
-      thoughtMd = null;
-      thoughtBuffer = "";
+    if (currentThought) {
+      currentThought.setFinished();
+      thoughtBlocks.push(currentThought);
+      currentThought = null;
     }
   };
 
@@ -672,10 +674,28 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       currentMd.setText(streamBuffer || "…");
       tui.requestRender();
     }
-    if (thoughtMd) {
-      thoughtMd.setText(thoughtBuffer);
-      tui.requestRender();
+  };
+
+  /**
+   * Repaint a streaming thought inside the same 50 ms window as the text: the
+   * block already holds its live markdown, so only the frame is throttled.
+   */
+  const flushThought = (): void => {
+    const now = Date.now();
+    if (now - lastFlush < 50) {
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushTimer = null;
+          // Covers both cases: with a text block in flight this refreshes it,
+          // thought-only bursts still need the paint.
+          flushStream(true);
+          tui.requestRender();
+        }, 50);
+      }
+      return;
     }
+    lastFlush = now;
+    tui.requestRender();
   };
 
   client.onUpdate((notification: SessionNotification) => {
@@ -726,13 +746,17 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       }
       case "agent_thought_chunk": {
         if (update.content?.type === "text") {
-          if (!thoughtMd) {
-            thoughtMd = new Markdown("", 1, 0, dimMarkdownTheme, { color: pc.dim });
-            transcript.addChild(new Text(pc.dim("💭 thinking"), 1, 0));
-            transcript.addChild(thoughtMd);
+          if (!currentThought) {
+            currentThought = new ThoughtBlock({
+              onToggle: () => tui.requestRender(),
+              // Only the alternate screen captures the mouse; on the main screen
+              // the bar points at `/think` instead of promising a click.
+              clickable: altScreen,
+            });
+            transcript.addChild(currentThought);
           }
-          thoughtBuffer += update.content.text;
-          flushStream();
+          currentThought.append(update.content.text);
+          flushThought();
         }
         break;
       }
@@ -801,6 +825,37 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     headerLine.setText(
       `${pc.green("🪿 rossii chat")}  ${pc.dim(`${currentProvider}/${currentModel}  ${opts.cwd}`)}${title}${setText}`,
     );
+    tui.requestRender();
+  };
+
+  // ─── Thought toggle (`/think`) ─────────────────────────────────────────────
+
+  const toggleAllThoughts = (args: string[]): void => {
+    const command = parseThoughtCommand(args);
+    if (!command) {
+      transcript.addChild(new Text(
+        pc.yellow("⚠ Usage: /think [toggle|expand|collapse] [all]"),
+        1, 0,
+      ));
+      tui.requestRender();
+      return;
+    }
+    // The list outlives a turn: `/think` reaches the whole conversation, not
+    // just the block that happens to be streaming right now. A live block is
+    // not in the list yet (`closeThought` adds it on finish), so it is spliced
+    // in as the most recent one.
+    const blocks = currentThought ? [...thoughtBlocks, currentThought] : thoughtBlocks;
+    if (blocks.length === 0) {
+      transcript.addChild(new Text(pc.dim("No thoughts in this conversation yet."), 1, 0));
+      tui.requestRender();
+      return;
+    }
+    const targets = command.all ? blocks : [blocks[blocks.length - 1]];
+    for (const block of targets) {
+      if (command.action === "expand") block.setExpanded(true);
+      else if (command.action === "collapse") block.setExpanded(false);
+      else block.toggle();
+    }
     tui.requestRender();
   };
 
@@ -977,6 +1032,12 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       const loaded = await client.loadSession({ cwd: opts.cwd, sessionId: target.id, mcpServers: [] });
       sessionId = target.id;
       sessionTitle = target.name;
+      // The replay may end on a thought or an assistant chunk; close those
+      // blocks, or the last one stays "Thinking…" and never joins
+      // `thoughtBlocks` (only the mouse could toggle it then).
+      closeUser();
+      closeMessage();
+      closeThought();
       if (loaded?.configOptions) newSessionConfigOptions = loaded.configOptions;
       transcript.addChild(new Text(pc.dim(`─── Switched to session: ${target.name} (${target.id}) ───`), 1, 0));
       // The wizard's provider/model pair survives the switch: applying it also
@@ -1442,6 +1503,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       case "fork":
         await forkCurrentSession();
         return;
+      case "think":
+        toggleAllThoughts(args);
+        return;
       default:
         transcript.addChild(new Text(pc.yellow(`⚠ Unknown command: /${cmd}. Use /config to open the configuration menu.`), 1, 0));
         tui.requestRender();
@@ -1555,8 +1619,6 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     if (turnError && !agentDead) {
       transcript.addChild(new Text(pc.red(`⚠ ${turnError}`), 1, 0));
     }
-    thoughtMd = null;
-    thoughtBuffer = "";
     tui.requestRender();
   };
 
@@ -1572,8 +1634,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     currentMd = null;
     currentMessageId = null;
     streamBuffer = "";
-    thoughtMd = null;
-    thoughtBuffer = "";
+    currentThought = null;
     closeUser();
     toolLines.clear();
     setLoader("thinking…");
@@ -1728,6 +1789,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     busy = false;
     setLoader(null);
     cancelAllPermissions();
+    closeThought();
     transcript.addChild(new Text(pc.red("⚠ goose acp exited unexpectedly"), 1, 0));
     for (const line of stderrTail.slice(-5)) {
       transcript.addChild(new Text(pc.dim(line), 1, 0));
@@ -1745,7 +1807,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   }
   transcript.addChild(new Text(
     pc.dim(
-      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit",
+      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit, /think",
     ),
     1, 0,
   ));

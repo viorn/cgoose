@@ -75,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/viorn/rossii/main/install-release.s
 
 Fetches the newest GitHub release, checks its SHA-256 and installs the binary to
 `~/.local/bin/rossii`. Pin a tag or a target directory with
-`sh -s -- --version v3.1.0 --dir /usr/local/bin`; `--help` shows the rest.
+`sh -s -- --version v3.2.0 --dir /usr/local/bin`; `--help` shows the rest.
 
 ### Option 2: Standalone binary (no runtime needed)
 
@@ -110,8 +110,10 @@ bun start
 rossii spawns `goose acp` and drives it as an ACP client. One command resumes a session, picks the
 set/provider/model from the project's history, and keeps everything changeable from inside the chat.
 
-- **Streaming** — assistant text is rendered as it arrives, thinking blocks are shown collapsed,
-  tool calls and their results are printed inline, and the status bar tracks the current set, context
+- **Streaming** — assistant text is rendered as it arrives, the thinking block that is streaming is
+  expanded (and collapses to a `💭 Thought · N chars` bar once the answer starts), so reasoning is
+  visible live but stays out of the way afterwards; a left click (or `/think`) opens it again. Tool
+  calls and their results are printed inline, and the status bar tracks the current set, context
   usage, tokens and cost.
 - **Its own screen** — the chat owns the alternate screen and scrolls the transcript itself
   (mouse wheel, PgUp/PgDn, Ctrl+Shift+F to search) while the composer stays pinned at the bottom.
@@ -138,6 +140,7 @@ Type them into the composer:
 | `/session rename <title>` · `/rename [title]` | Rename (bare command asks in the composer) |
 | `/fork` | Copy the conversation into a new session |
 | `/edit` | Write the prompt in `$VISUAL`/`$EDITOR` — it is sent when the editor closes |
+| `/think [expand\|collapse] [all]` | Expand/collapse thinking blocks (bare `/think` toggles the last one) |
 | `/settings` (alias of `/config`) | Same menu as `/config` |
 
 ### Keyboard shortcuts

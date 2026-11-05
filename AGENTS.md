@@ -125,6 +125,17 @@ warns in the TUI and keeps the ACP default.
   transcript back to the normal screen, so scrollback keeps the conversation.
   `ROSSII_CHAT_MAIN_SCREEN=1` switches back to `TuiMainScreen` (inline; the terminal owns
   scrollback, so any repaint — spinner, streamed chunk — pulls the view to the bottom)
+- Thinking blocks (`src/acp/thought.ts`, `ThoughtBlock`): the block that is streaming starts
+  **expanded** (reasoning is visible live, like before the collapsible bars) and collapses to
+  `💭 Thought · N chars` on `setFinished()`; a click or `/think` reopens it. A manual toggle
+  (`toggle()` / `setExpanded()`) outranks that auto-collapse. `/think [expand|collapse] [all]`
+  reaches every block of the conversation (`parseThoughtCommand` is pure and unit-tested),
+  `/think` alone toggles the most recent one. Clicking is only advertised when the renderer
+  captures the mouse: `TuiMainScreen` does not, so the bar says `/think expand` there
+  (`clickable` option). The transcript stays a plain `Container` — `Stack.render` does not
+  record the child geometry `Container.handleMouse` hit-tests with, so a `VStack` there
+  re-rendered the whole transcript on every mouse event. Thought repaints share the text
+  stream's 50 ms window (`flushThought`) instead of one frame per chunk.
 - Session sets in chat mode (verified live on goose 1.50.0 and 1.57.0 via the probes described in
   `plans/acp-mode-review5.md`):
   - builtins → `goose acp --with-builtin <names>` **and** `{type:"builtin",name}` entries in the
@@ -157,7 +168,7 @@ warns in the TUI and keeps the ACP default.
     (`mode: "set"`, key `rossii`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
 - **Live configuration** — no restart: slash commands typed into the composer
-  (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`) plus `SelectList`
+  (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`, `/think`) plus `SelectList`
   overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
   - provider/model → `session/set_config_option`; the response's `configOptions` are kept, and
     `session/load`'s are read too (`LoadSessionResponse` used to be discarded, which is why the
