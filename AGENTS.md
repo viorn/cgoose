@@ -6,7 +6,8 @@
 > The rename is deliberately backward compatible — `ROSSII_*` settings fall back to `CGOOSE_*`
 > (`env()` in `src/utils.ts`), settings are read from `~/.config/rossii` or the old
 > `~/.config/cgoose` when the new one is absent, and a session's system prompt stored under the
-> legacy `cgoose` key is cleared on apply (`applySystemPrompt()` in `src/acp/chat.ts`).
+> legacy `cgoose` key is cleared on apply (`applySystemPrompt()` in
+> `src/acp/chat-extensions.ts`).
 
 ## Overview
 
@@ -39,7 +40,13 @@ The TUI wizard has 6 steps, each with `initialValue` set to the last-used select
 
 Quick modes skip the wizard: `rossii a` (last session in this directory) and `rossii n`
 (new session) go straight to step 6, and in **chat mode they skip the confirmation too** —
-the chat opens immediately (`quickLaunch` in `src/index.ts`). Classic mode still asks.
+the chat opens immediately (`quickLaunch` in `src/wizard-launch.ts`). Classic mode still asks.
+
+Implementation of the wizard: `src/index.ts` is a thin `main()` (CLI flags, worktree /
+renderer resolution, the step loop), `src/wizard-steps.ts` holds steps 1–5 plus
+`resolveChatMode`/`LEGACY_CHAT_ALIASES`, `src/wizard-launch.ts` resolves the CLI launch
+mode and renders the summary, and `src/wizard-sessions.ts` holds the session-deletion
+dialog and the set create/manage wizards.
 
 If no project meta exists yet, first option is selected (None → first provider → first model).
 
@@ -115,7 +122,19 @@ warns in the TUI and keeps the ACP default.
   pure and unit-tested), `session-meta.ts` (`session/new` `_meta`, pure and unit-tested),
   `session-config.ts` (provider/model via `session/set_config_option`, pure planning +
   non-throwing apply, unit-tested), `steer.ts` (steering a running turn: meta parsing and
-  the Enter decision, pure and unit-tested), `chat.ts` (pi-tui based chat UI)
+  the Enter decision, pure and unit-tested),
+  `overlay.ts` (framed / searchable lists),
+  `timeouts.ts` (turn watchdogs), `thought.ts` · `tool-call-block.ts` ·
+  `tool-call-content.ts` (the collapsible thinking and tool blocks)
+- The chat itself is one module per responsibility, all sharing a `ChatContext`
+  (`chat-context.ts`: the mutable state, themes, constants, `createChatContext`):
+  `chat.ts` (~120 lines) only orchestrates — spawns `goose acp`, builds the context and
+  wires the rest; `chat-ui.ts` (layout, composer, keyboard, watchdogs, shutdown, agent
+  exit), `chat-io.ts` (prompt dispatch, steering, `/edit`, turn lifecycle),
+  `chat-stream.ts` (`session/update` rendering), `chat-session.ts` (initialize +
+  `session/new`|`session/load`, `/session` commands), `chat-config.ts` (`/config` menus
+  and the model fetch), `chat-extensions.ts` (the set's extension plan and its
+  reconciliation), `chat-handlers.ts` (agent→client requests: permissions, fs)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
 - Rendering: the chat owns the **alternate screen** — `TuiAltScreen` with an explicit

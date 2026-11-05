@@ -356,16 +356,30 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | Path | Role |
 |------|------|
 | `src/acp/client.ts` | ACP transport: spawn, JSON-RPC framing, request timeouts, agent→client handlers |
-| `src/acp/chat.ts` | the chat UI: transcript, composer, overlays, slash commands, watchdogs |
+| `src/acp/chat.ts` | chat orchestrator: spawns the agent, builds the `ChatContext`, wires the modules |
+| `src/acp/chat-context.ts` | the chat's shared state, themes, constants and `createChatContext` |
+| `src/acp/chat-ui.ts` | layout, composer, keyboard, watchdogs, shutdown, agent exit |
+| `src/acp/chat-io.ts` | prompt dispatch, steering, `/edit`, the turn lifecycle |
+| `src/acp/chat-stream.ts` | `session/update` rendering: answers, thoughts, tool call blocks |
+| `src/acp/chat-session.ts` | `initialize` + `session/new`\|`session/load` and the `/session` commands |
+| `src/acp/chat-config.ts` | `/config` menus and the model fetch |
+| `src/acp/chat-extensions.ts` | the set's extension plan and its reconciliation against a live session |
+| `src/acp/chat-handlers.ts` | agent→client requests: permission queue, `fs/read_text_file`, `fs/write_text_file` |
 | `src/acp/custom.ts` | Goose's custom `_goose/unstable/*` requests |
 | `src/acp/extensions.ts` | session set → ACP extension list (`planGooseExtensions`, `planProfileExtensions`, diffing) |
 | `src/acp/session-config.ts` | provider/model through `session/set_config_option` |
 | `src/acp/session-meta.ts` | `session/new` `_meta` (session title, client identity, extension list) |
 | `src/acp/steer.ts` | steering a running turn: meta parsing and the Enter/queue decision |
 | `src/acp/overlay.ts` | framed and searchable overlay components |
+| `src/acp/thought.ts` | the collapsible thinking block (`/think`) |
+| `src/acp/tool-call-block.ts` | the collapsible tool call block (`/tool`) |
+| `src/acp/tool-call-content.ts` | the wire shapes behind a tool block (content, diffs, live output) |
 | `src/acp/timeouts.ts` | turn watchdogs |
 | `src/launcher.ts` | shared launch preparation (worktree, env, secrets) and the classic mode |
-| `src/index.ts` | CLI flags and the setup wizard |
+| `src/index.ts` | CLI flags, mode resolution and the step loop (a thin `main`) |
+| `src/wizard-steps.ts` | wizard steps 1–5 (session, name, set, provider, model) |
+| `src/wizard-launch.ts` | launch-mode resolution (`a`/`n`/`s`) and the summary/launch step |
+| `src/wizard-sessions.ts` | session deletion and the set create/manage wizards |
 
 ### Development
 

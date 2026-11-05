@@ -351,16 +351,30 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | Путь | Роль |
 |------|------|
 | `src/acp/client.ts` | транспорт ACP: spawn, JSON-RPC, таймауты запросов, обработчики agent→client |
-| `src/acp/chat.ts` | сам чат: транскрипт, композер, оверлеи, слэш-команды, вотчдоги |
+| `src/acp/chat.ts` | оркестратор чата: спавнит агента, собирает `ChatContext`, связывает модули |
+| `src/acp/chat-context.ts` | общее состояние чата, темы, константы и `createChatContext` |
+| `src/acp/chat-ui.ts` | вёрстка, композер, клавиатура, вотчдоги, shutdown, выход агента |
+| `src/acp/chat-io.ts` | отправка промпта, steering, `/edit`, жизненный цикл хода |
+| `src/acp/chat-stream.ts` | рендер `session/update`: ответы, мысли, блоки вызовов инструментов |
+| `src/acp/chat-session.ts` | `initialize` + `session/new`\|`session/load` и команды `/session` |
+| `src/acp/chat-config.ts` | меню `/config` и загрузка списка моделей у провайдера |
+| `src/acp/chat-extensions.ts` | план расширений сета и его сверка с живой сессией |
+| `src/acp/chat-handlers.ts` | запросы agent→client: очередь permission, `fs/read_text_file`, `fs/write_text_file` |
 | `src/acp/custom.ts` | кастомные запросы Goose `_goose/unstable/*` |
 | `src/acp/extensions.ts` | session set → список расширений ACP (`planGooseExtensions`, `planProfileExtensions`, диффы) |
 | `src/acp/session-config.ts` | провайдер/модель через `session/set_config_option` |
 | `src/acp/session-meta.ts` | `_meta` для `session/new` (имя сессии, идентичность клиента, список расширений) |
 | `src/acp/steer.ts` | steering идущего хода: разбор меты и решение Enter/очередь |
 | `src/acp/overlay.ts` | рамные и поисковые оверлеи |
+| `src/acp/thought.ts` | сворачиваемый блок размышлений (`/think`) |
+| `src/acp/tool-call-block.ts` | сворачиваемый блок вызова инструмента (`/tool`) |
+| `src/acp/tool-call-content.ts` | формы данных, из которых собирается блок вызова (контент, диффы, живой вывод) |
 | `src/acp/timeouts.ts` | вотчдоги хода |
 | `src/launcher.ts` | общая подготовка запуска (worktree, env, секреты) и классический режим |
-| `src/index.ts` | CLI-флаги и визард |
+| `src/index.ts` | CLI-флаги, выбор режима и цикл шагов (тонкий `main`) |
+| `src/wizard-steps.ts` | шаги визарда 1–5 (сессия, имя, сет, провайдер, модель) |
+| `src/wizard-launch.ts` | выбор режима запуска (`a`/`n`/`s`) и шаг сводки/запуска |
+| `src/wizard-sessions.ts` | удаление сессий и визарды создания/управления сетами |
 
 ### Разработка
 
