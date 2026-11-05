@@ -84,7 +84,8 @@ bash build.sh
 ./rossii
 ```
 
-Requires **Bun** to build; the resulting binary runs on any Linux x86_64 without Bun.
+Requires **Bun** to build; the resulting binary runs without Bun on glibc Linux x86_64 — see
+[Requirements and compatibility](#requirements-and-compatibility).
 
 ### Option 3: Local install (requires Bun)
 
@@ -344,6 +345,31 @@ New sessions can run in a dedicated worktree at `<repo>/.worktree/<name>` on a m
 - **Bun** ≥ 1.x to run from source or build the binary.
 - Linux; macOS may work; Windows is unsupported.
 
+The **release binary** is a Bun standalone executable: x86_64, linked against the system glibc,
+with the whole Bun runtime embedded. That runtime is the artifact — rossii's own code is ~0.9 MB
+of it — so the file's size follows the Bun that compiled it (83.4 MB for Bun 1.4.0, 105 MB for
+1.4.4). It asks for the standard loader `/lib64/ld-linux-x86-64.so.2` and needs nothing beyond
+glibc's own `libc`, `libm`, `libdl` and `libpthread`; its highest required symbol version is
+`GLIBC_2.17`. Verified by running the release in clean containers:
+
+| System | glibc | Result |
+|--------|-------|--------|
+| centos:7 | 2.17 | runs |
+| debian:8 | 2.19 | runs |
+| ubuntu:16.04 | 2.23 | runs |
+| debian:11 | 2.31 | runs |
+| alpine (musl) | musl | **no** — no glibc, no `/lib64/ld-linux-x86-64.so.2` |
+
+What it will not do: run on **musl** distributions (Alpine, Void-musl, OpenWrt) — Bun cannot build
+a fully static binary, its `bun-linux-x64-musl` target still wants `libc.musl` and `libstdc++` — or
+on a CPU without AVX2, which the official x64 builds of Bun use. There is no ARM64 binary yet. On
+those, run from source (`bun install && bun start`) with a Bun built for the machine.
+
+`build.sh` guards the part that used to break silently: it refuses to emit a binary whose loader is
+not `/lib64/ld-linux-x86-64.so.2` or that needs a C++/musl runtime, and prints the Bun that compiled
+it. The released 2.0.2 … 3.0.0 binaries had asked for Homebrew's loader and started on no machine
+but the one that built them.
+
 ---
 
 ## Environment variables
@@ -417,7 +443,7 @@ The probe scripts under `scripts/acp-*-probe.ts` (config options, config surface
 
 | Script | What it does |
 |--------|--------------|
-| `build.sh` | compiles a standalone binary (`./rossii`) with the Bun runtime embedded |
+| `build.sh` | compiles a standalone binary (`./rossii`) with the Bun runtime embedded, and refuses one whose loader is not the system's |
 | `install.sh` | installs source to `~/.local/lib/rossii/` and a launcher to `~/.local/bin/rossii` |
 | `install-release.sh` | installs the latest release binary to `~/.local/bin/rossii` — what the curl one-liner runs |
 

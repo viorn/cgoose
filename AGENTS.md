@@ -398,6 +398,20 @@ Write `~/.config/rossii/sets/<name>.json` with the shape above, or use the TUI w
 ### Reset project history
 Delete the corresponding file in `~/.config/rossii/projects/`.
 
+### Build the release binary
+`bash build.sh` — writes `rossii-<version>-linux-x86_64` and its `.sha256`, and refuses to leave an
+artifact whose loader is not `/lib64/ld-linux-x86-64.so.2` or that needs a C++/musl runtime (the
+released 2.0.2 … 3.0.0 had Homebrew's loader baked in and started only on the build machine).
+
+Do **not** add `--target=…` to that command: an explicit target makes Bun download the official
+release for it and can replace the installed `bun` (observed 1.4.0 → 1.4.4 mid-session, artifacts
+83.4 MB → 105 MB). The artifact *is* the embedded Bun runtime with ~2.5 MB of rossii on top, so its
+size follows the compiler — `build.sh` prints `bun --revision` next to the result. The binary runs
+on glibc ≥ 2.17 x86_64 (centos:7, debian:8, ubuntu:16.04, debian:11 verified); not on musl
+(`bun-linux-x64-musl` still needs `libc.musl` and `libstdc++`), not on ARM64, not on a CPU without
+AVX2. Builds are reproducible for the same outfile name and Bun — the name is embedded in the
+executable, so a differently named output hashes differently.
+
 ## Navigation
 
 - **Esc** at any prompt: go back one step
