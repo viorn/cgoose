@@ -91,7 +91,7 @@ import {
   setSessionSystemPrompt,
 } from "./custom";
 import { BorderBox, SearchableList } from "./overlay";
-import { listSessionSets, type SessionSet } from "../rossii-config";
+import { DEFAULT_PROFILE_SENTINEL, listSessionSets, type SessionSet } from "../rossii-config";
 import {
   addModelToCustomProviderJson,
   getConfigProviders,
@@ -101,6 +101,7 @@ import {
 } from "../config";
 import { fetchModels, type ApiModelInfo } from "../models";
 import { getAllSessions } from "../sessions";
+import { writeProjectMeta } from "../project";
 import { env, formatCharCount, formatNumber } from "../utils";
 import { getProjectSessionDirs, isInsideGitRepo } from "../worktree";
 import { buildExtensionArgs, listGooseExtensions } from "../goose-extensions";
@@ -137,6 +138,14 @@ export interface AcpChatOptions {
   set?: SessionSet;
   /** True when no set means "load goose's default profile" (`__default__`). */
   useDefaultProfile: boolean;
+  /**
+   * Set key exactly as stored in the project meta's `setHistory`: a set's name,
+   * "" (None) or the `__default__` sentinel. The chat persists it back when the
+   * configuration changes live, so the wizard's next run starts from what the
+   * chat is actually using. Optional: when omitted it is derived from `set` and
+   * `useDefaultProfile`.
+   */
+  setKey?: string;
   /** Builtin names resolved from the set + goose config.yaml. */
   agentBuiltins: string[];
   /** Raw stdio extension specs (`[name:]ENV=val cmd args...`) from the set. */
@@ -303,6 +312,11 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   // Short form: the header already carries the cwd and the session title, so
   // the long "Default (goose config.yaml)" label would wrap the line.
   let currentSetLabel = opts.set?.title ?? (opts.useDefaultProfile ? "Default" : undefined);
+  // Set key as stored in the project meta's `setHistory`: a set's name, "" for
+  // None or the `__default__` sentinel. "Default" and "None" have no SessionSet
+  // object to read a name from, so the key is tracked next to the resolved set.
+  let currentSetKey =
+    opts.setKey ?? (opts.useDefaultProfile ? DEFAULT_PROFILE_SENTINEL : opts.set?.name ?? "");
 
   // Turn watchdogs (see ./timeouts.ts). `lastAgentActivity` is refreshed by
   // every session/update, so only a *silent* agent is cancelled by the idle
@@ -927,6 +941,26 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     tui.setFocus(list);
   };
 
+  /**
+   * Persist the live selection to the project meta — the same file the wizard
+   * writes in `prepareLaunch()`, keyed by the working directory. Without this,
+   * a `/model`, `/provider` or `/set` change lived only in this process: the
+   * next `rossii` run (wizard or `rossii a`) started from the launch-time pair.
+   * Best-effort: a failed write is reported but must not break the turn.
+   */
+  const persistSelection = (): void => {
+    try {
+      writeProjectMeta(currentProvider, currentModel, currentSetKey);
+    } catch (error) {
+      transcript.addChild(
+        new Text(
+          pc.yellow(`⚠ Could not save the configuration to the project history: ${String((error as Error)?.message ?? error)}`),
+          1, 0,
+        ),
+      );
+    }
+  };
+
   const changeModel = async (newModel: string): Promise<void> => {
     if (!sessionId) return;
     const outcome = await applySessionConfig(
@@ -943,6 +977,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       transcript.addChild(new Text(pc.dim(`⚙ Model changed to ${currentModel}`), 1, 0));
       renderStatus();
       renderHeader();
+      persistSelection();
     }
     tui.requestRender();
   };
@@ -964,6 +999,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       transcript.addChild(new Text(pc.dim(`⚙ Provider changed to ${currentProvider}, model: ${currentModel}`), 1, 0));
       renderStatus();
       renderHeader();
+      persistSelection();
     }
     tui.requestRender();
   };
@@ -1037,6 +1073,10 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     currentSet = newSet;
     currentUseDefaultProfile = useDefault;
     currentSetLabel = useDefault ? "Default" : label;
+    // `changeSet("none")` leaves `newSet` undefined, so the key is ""; "default"
+    // is the sentinel; anything else is the set's name.
+    currentSetKey = useDefault ? DEFAULT_PROFILE_SENTINEL : (newSet?.name ?? "");
+    persistSelection();
 
     renderHeader();
     renderStatus();

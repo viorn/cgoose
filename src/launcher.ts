@@ -27,7 +27,7 @@ import pc from "picocolors";
 import { writeProjectMeta, saveWorktreeMapping } from "./project";
 import { getModelContextLimit, getGooseSecrets } from "./config";
 import type { ProviderInfo } from "./config";
-import { readRossiiConfig, getSessionSet } from "./rossii-config";
+import { DEFAULT_PROFILE_SENTINEL, readRossiiConfig, getSessionSet } from "./rossii-config";
 import type { SessionSet } from "./rossii-config";
 import { buildExtensionArgs } from "./goose-extensions";
 import { isInsideGitRepo, createWorktree, getSessionWorktreePath, getRepoRoot } from "./worktree";
@@ -37,8 +37,11 @@ import { runAcpChat } from "./acp/chat";
 /**
  * Sentinel value for the "Default" pseudo-set: load Goose's default profile
  * (i.e. the extensions enabled in ~/.config/goose/config.yaml).
+ *
+ * Re-exported for existing importers (index.ts); the value itself lives in
+ * rossii-config.ts so chat mode can use it without importing the launcher.
  */
-export const DEFAULT_PROFILE_SENTINEL = "__default__";
+export { DEFAULT_PROFILE_SENTINEL };
 
 // ─── Shared launch preparation ───────────────────────────────────────────────
 
@@ -373,6 +376,9 @@ export async function launchGooseAcp(opts: AcpLaunchOptions): Promise<void> {
     resumeConfig: opts.resumeConfig,
     set,
     useDefaultProfile: prepared.useDefaultProfile,
+    // Raw set key (`""` = None, `__default__` = goose profile, else a set name):
+    // the chat writes it back to the project meta when the configuration changes.
+    setKey: opts.sessionSet,
     agentBuiltins,
     stdioExtensionSpecs: set ? [...(set.stdioExtensions ?? []), ...extArgs.stdio] : [],
     httpExtensionUris: extArgs.http,

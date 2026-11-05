@@ -179,6 +179,12 @@ warns in the TUI and keeps the ACP default.
   - provider/model → `session/set_config_option`; the response's `configOptions` are kept, and
     `session/load`'s are read too (`LoadSessionResponse` used to be discarded, which is why the
     model menu claimed "No model list available" on every resume)
+  - every successful `/provider`, `/model` or `/set` change is written back to the per-project
+    meta (`~/.config/rossii/projects/<dir>-<hash>.json`) through `persistSelection()` →
+    `writeProjectMeta()` — the same file `prepareLaunch()` writes for the wizard — so the next
+    `rossii`/`rossii a`/wizard run starts from what the chat is actually using instead of the
+    launch-time pair. The set key goes into `setHistory` as-is: `""` = None, `__default__` =
+    goose's profile, anything else = the set's name
   - set → system prompt + **extension reconciliation in place** through
     `_goose/unstable/session/extensions/{list,add,remove}`, driven by `planForSet()`:
     `buildExtensionArgs` resolves the set's `extensions:` names exactly like the launcher, so

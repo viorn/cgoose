@@ -46,6 +46,17 @@ const SET_EXTENSIONS = [".yaml", ".yml", ".json"] as const;
 export type DefaultMode = "worktree" | "no-worktree";
 
 /**
+ * Sentinel for the "Default" pseudo-set: load Goose's own profile from
+ * ~/.config/goose/config.yaml instead of a set's extension list. Stored in the
+ * project meta's `setHistory` next to set names and "" (None), so both the
+ * wizard and chat mode can tell the three cases apart.
+ *
+ * Defined here (not in launcher.ts) so chat mode can use it without importing
+ * the launcher, which imports chat.
+ */
+export const DEFAULT_PROFILE_SENTINEL = "__default__";
+
+/**
  * A named session set — bundles a system prompt with extensions.
  * Used as a lightweight alternative to Goose recipes, always launched
  * via `goose session` (never `goose run`).
