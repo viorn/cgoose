@@ -1,6 +1,6 @@
 {
   "name": "rossii",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "An ACP terminal UI for Goose \u2014 chat, live configuration, session sets",
   "type": "module",
   "repository": {
@@ -13,13 +13,14 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "check": "tsc -p tsconfig.json",
-    "test": "bun scripts/acp-extensions-test.ts && bun scripts/acp-session-meta-test.ts && bun scripts/acp-session-config-test.ts && bun scripts/sessions-list-test.ts && bun scripts/acp-client-offline-test.ts && bun scripts/acp-overlay-test.ts",
+    "test": "bun scripts/acp-extensions-test.ts && bun scripts/acp-session-meta-test.ts && bun scripts/acp-session-config-test.ts && bun scripts/sessions-list-test.ts && bun scripts/acp-client-offline-test.ts && bun scripts/acp-overlay-test.ts && bun scripts/acp-thought-test.ts",
     "test:extensions": "bun scripts/acp-extensions-test.ts",
     "test:session-meta": "bun scripts/acp-session-meta-test.ts",
     "test:session-config": "bun scripts/acp-session-config-test.ts",
     "test:sessions": "bun scripts/sessions-list-test.ts",
     "test:client": "bun scripts/acp-client-offline-test.ts",
     "test:overlay": "bun scripts/acp-overlay-test.ts",
+    "test:thought": "bun scripts/acp-thought-test.ts",
     "acp:probe": "bun scripts/acp-probe.ts",
     "acp:smoke": "bun scripts/acp-client-smoke.ts"
   },
