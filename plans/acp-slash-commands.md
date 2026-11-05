@@ -123,3 +123,52 @@ goose (`COMPACT_TRIGGERS.contains(..) || == "/clear"` в `agents/agent.rs`).
     так ведёт себя и родной TUI goose;
   - команды rossii (`/think expand|collapse all`) — по-прежнему обрабатываются чатом, без
     обращения к модели.
+
+
+## 6. Автодополнение тех же команд в композере (Tab)
+
+Раньше дополнения не было вовсе: pi-tui вызывает провайдера только если он установлен
+(`Editor.setAutocompleteProvider`), а `setupUi` его не ставил — поэтому `/` и `Tab` были
+мёртвыми клавишами, и в `/help` это было написано прямым текстом.
+
+Правило то же, что и в маршрутизации: меню показывает ровно то, что видно в `/help`, и ничего
+не решает. Источников два, команды чата первыми:
+
+- `CHAT_COMMANDS` (`src/acp/command-complete.ts`) — то, что обрабатывает `handleCommand`;
+- объявленные goose (`context.gooseCommands`, из `available_commands_update`) — встроенные,
+  рецепты и скиллы; список читается на каждое нажатие, потому что goose присылает его уже
+  после `session/new`, а не до.
+
+Механика — на стороне редактора, своего кода в ней нет: меню открывается само, пока первая
+строка начинается с `/` (`isInSlashCommandContext` → `tryTriggerAutocomplete` на каждый ввод),
+и по `Tab` (`handleTabCompletion` → `handleSlashCommandCompletion`); `↑`/`↓` двигают выбор,
+`Enter` подставляет **и отправляет** (условие самого pi-tui: `prefix.startsWith("/")`),
+`Tab` при открытом меню только подставляет, `Esc` закрывает меню и сохраняет черновик
+(`capturesViewportInput` уже отдавал Esc редактору — см. `chat-ui.ts`).
+
+Изменения:
+
+- `src/acp/command-complete.ts` — **новый** модуль: `CHAT_COMMANDS`, `buildCommandItems`
+  (склейка без дублей: имя, которое чат обрабатывает сам, остаётся за чатом),
+  `commandSuggestions` (только имя, до первого пробела; сначала совпадения с начала имени,
+  затем вхождения), `applyCommandCompletion` (`/имя ` + курсор за пробелом, хвост токена
+  справа от курсора не остаётся) и `createCommandCompleter`.
+- `src/acp/chat-ui.ts` — `setAutocompleteProvider(createCommandCompleter(...))`,
+  `autocompleteMaxVisible: 8`, подсказка в старте чата.
+- `src/acp/chat-config.ts` — `/help` печатает ту же пару списков и напоминает про `Tab`.
+- `scripts/acp-command-complete-test.ts` — **новый**, подключён в `bun run test`.
+
+`prefix` возвращается вместе со слэшем — это не деталь стиля: редактор по нему выбирает
+узкую раскладку списка и по нему же решает, что `Enter` должен не только подставить команду,
+но и выполнить её. На живом прогоне версия без слэша подставляла `/compact` и молча ждала
+второго `Enter`.
+
+Проверка (tmux, goose 1.57.0, `custom_kodik/qwen/qwen3.6-flash`, изоляция через
+`ROSSII_PROJECTS_DIR`): `/` → список из 24 имён с `(1/24)` и описаниями; `/co` → `config`,
+`compact`; `Down` + `Tab` → `/compact ` (подставилось, не отправилось); `Enter` на `/com` →
+заметка про переписывание, `❯ /compact`, `Compaction complete`, `tokens 1358` → `133`;
+`Tab` после `Esc` переоткрывает меню, сохраняя черновик; `/sta` + `Enter` во время хода →
+«⧗ queued for after this turn: /status»; обычный текст во время хода по-прежнему уходит
+в steering («⤴ steer queued»), `/edit`, `/think`, `Ctrl+P/O` не задеты. Команды
+`bun run check`, `bun run test` (16 новых проверок), `--noUnusedLocals` — чисто, кроме
+4 прежних предупреждений.

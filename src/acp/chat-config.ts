@@ -338,7 +338,10 @@ export function submitGooseCommand(ctx: ChatContext, text: string): void {
   void submitPrompt(ctx, text);
 }
 
-/** `/help` — the commands, since the composer has no completion list. */
+/**
+ * `/help` — the same two lists the composer's completion menu offers
+ * (./command-complete.ts), printed for reading.
+ */
 export function showCommandsHelp(ctx: ChatContext): void {
   ctx.transcript.addChild(new Text(
     pc.dim("The chat: ") + "/config /model /provider /set /session /rename /fork /think /tool /edit /fetch /help",
@@ -349,6 +352,10 @@ export function showCommandsHelp(ctx: ChatContext): void {
       ? pc.dim("goose:    ") + formatGooseCommandNames(ctx.gooseCommands) +
         pc.dim("  (any other /command goes to the agent too)")
       : pc.dim("goose also has its own commands (/compact, /clear, /status…) — its list is not here yet, try /help again."),
+    1, 0,
+  ));
+  ctx.transcript.addChild(new Text(
+    pc.dim("Tab (or just `/`) opens the same list in the composer · ↑/↓ pick · Enter applies · Esc closes"),
     1, 0,
   ));
   ctx.tui.requestRender();

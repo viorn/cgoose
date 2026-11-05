@@ -124,6 +124,8 @@ warns in the TUI and keeps the ACP default.
   non-throwing apply, unit-tested), `steer.ts` (steering a running turn: meta parsing and
   the Enter decision, pure and unit-tested), `slash-commands.ts` (which `/…` is the chat's
   and which is goose's, plus the command list goose announces, pure and unit-tested),
+  `command-complete.ts` (the composer's `/…` completion menu: the chat's commands plus
+  goose's announced ones, pure and unit-tested),
   `overlay.ts` (framed / searchable lists),
   `timeouts.ts` (turn watchdogs), `thought.ts` · `tool-call-block.ts` ·
   `tool-call-content.ts` (the collapsible thinking and tool blocks)
@@ -241,6 +243,18 @@ warns in the TUI and keeps the ACP default.
   `session/load` and fork) is kept for `/help`; for `/compact`, `/clear` and `/summarize` a
   note says goose rewrites its stored conversation and the transcript here is not refreshed
   (goose's ACP server does not forward `AgentEvent::HistoryReplaced`)
+- **Completing them** — the composer completes `/…` (`src/acp/command-complete.ts`): the
+  editor gets an `AutocompleteProvider`, which pi-tui only has when one is installed
+  (`setupUi` did not, so `/` and Tab were dead keys). It offers the chat's commands
+  (`CHAT_COMMANDS`, the same list `/help` prints) followed by goose's announced ones —
+  builtins, recipes and skills — de-duplicated by name, read lazily per keystroke so
+  goose's list can arrive after the provider is installed. Typing `/` on the first line
+  opens the menu by itself (`isInSlashCommandContext`), Tab opens or re-opens it after Esc,
+  ↑/↓ pick, Esc closes it and keeps the draft (`capturesViewportInput` already hands Esc to
+  the editor), Enter applies **and submits** (`prefix.startsWith("/")` is the editor's own
+  condition for a slash command), Tab applies without submitting. Matching is
+  prefix-then-substring, case-insensitive, names only: `/model ` (with a space) closes the
+  menu. Nothing is gated by it — it is a shortcut for typing, not a filter
 - **Live configuration** — no restart: slash commands typed into the composer
   (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`, `/think`, `/tool`) plus `SelectList`
   overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
@@ -342,7 +356,8 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts`, `steer.ts`, `slash-commands.ts`, the db-backed session listing, the overlay
+  `session-config.ts`, `steer.ts`, `slash-commands.ts`, `command-complete.ts`, the db-backed
+  session listing, the overlay
   components and the
   tool-call block + its `tool-call-content.ts` wire mapping — no goose
   needed), `bun scripts/acp-probe.ts`

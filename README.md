@@ -139,7 +139,14 @@ set/provider/model from the project's history, and keeps everything changeable f
 
 ### Slash commands
 
-Type them into the composer:
+Type `/` on the first line of the composer and the list opens by itself — the chat's commands first,
+then goose's (builtins, your recipes and skills, as goose announces them). `Tab` opens or re-opens it
+after `Esc`, `↑`/`↓` pick, `Enter` applies the pick **and runs it**, `Esc` closes the menu and keeps
+what you typed; typing narrows it (prefix match first, then substring), and a space closes it — `/model `
+has arguments, and this menu completes names. `Tab` on an open menu inserts the command without running
+it.
+
+The menu is a shortcut for typing, not a filter: type the commands out in full any time.
 
 | Command | What it does |
 |---------|--------------|
@@ -384,6 +391,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | `src/acp/session-meta.ts` | `session/new` `_meta` (session title, client identity, extension list) |
 | `src/acp/steer.ts` | steering a running turn: meta parsing and the Enter/queue decision |
 | `src/acp/slash-commands.ts` | which `/…` is the chat's and which goes to goose (`/compact`, `/clear`, recipes, skills) |
+| `src/acp/command-complete.ts` | the composer's `/…` completion menu: the chat's commands plus goose's announced ones |
 | `src/acp/overlay.ts` | framed and searchable overlay components |
 | `src/acp/thought.ts` | the collapsible thinking block (`/think`) |
 | `src/acp/tool-call-block.ts` | the collapsible tool call block (`/tool`) |
@@ -399,7 +407,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 
 ```bash
 bun run check     # tsc
-bun run test      # unit tests: extensions, session meta/config, steering, slash commands, sessions db, client, overlays
+bun run test      # unit tests: extensions, session meta/config, steering, slash commands + their completion, sessions db, client, overlays
 bun run acp:probe # raw ACP session against a real goose
 bun run acp:smoke # AcpClient without the TUI
 ```

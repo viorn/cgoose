@@ -25,6 +25,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { editorTheme } from "./chat-context";
+import { buildCommandItems, createCommandCompleter } from "./command-complete";
 import { closeThought, closeToolBlocks, renderHeader, renderStatus } from "./chat-stream";
 import { showConfigMenu, showModelMenu } from "./chat-config";
 import { abandonPendingSteers, promptInEditor, setLoader } from "./chat-io";
@@ -71,7 +72,15 @@ export function setupUi(ctx: ChatContext): void {
   loader.setText("");
   ctx.loader = loader;
 
-  ctx.editor = new Editor(tui, editorTheme, { paddingX: 1 });
+  // 8 rows of completion: the chat's twelve names plus goose's (builtins,
+  // recipes, skills) is around two dozen, and the editor scrolls the rest with
+  // its "(1/24)" counter.
+  ctx.editor = new Editor(tui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 8 });
+  // The `/…` menu. The list is read lazily — goose announces its own commands
+  // after `session/new`, which is later than this line (./command-complete.ts).
+  ctx.editor.setAutocompleteProvider(
+    createCommandCompleter(() => buildCommandItems(ctx.gooseCommands)),
+  );
 
   if (isViewportTUI(tui)) {
     // The header scrolls with the conversation (it is just the first lines of
@@ -121,7 +130,7 @@ export function startChat(ctx: ChatContext): void {
   }
   ctx.transcript.addChild(new Text(
     pc.dim(
-      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit, /think, /tool" +
+      "Type / for the command list (Tab completes it, /help prints it) · /config changes provider, model, set or session · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR" +
         (ctx.steeringEnabled ? " · Enter during a turn adds to that turn, Esc cancels it" : ""),
     ),
     1, 0,
