@@ -18,6 +18,12 @@
 
 import { spawn } from "node:child_process";
 
+import {
+  activeRunIdFromMeta as activeRunIdFrom,
+  queuedSteerIdFromMeta as queuedSteerIdFrom,
+  steerChunkId as steerChunkFrom,
+} from "../src/acp/steer";
+
 const BIN = process.env.ROSSII_ACP_BIN || "goose";
 const EXTRA_ARGS = (process.env.ROSSII_ACP_ARGS || "").split(" ").filter(Boolean);
 const TIMEOUT_MS = (() => {
@@ -59,27 +65,8 @@ function notify(method: string, params: unknown): void {
   send({ jsonrpc: "2.0", method, params });
 }
 
-/** `_meta.goose.activeRunId` — set when a run starts, `null` when it ends. */
-function activeRunIdFrom(meta: any): string | null | undefined {
-  const goose = meta?.goose;
-  if (!goose || !("activeRunId" in goose)) return undefined;
-  return typeof goose.activeRunId === "string" || goose.activeRunId === null
-    ? goose.activeRunId
-    : undefined;
-}
-
-/** `_meta.goose.queuedSteer.messageId` — ack that the steer was queued. */
-function queuedSteerIdFrom(meta: any): string | undefined {
-  const q = meta?.goose?.queuedSteer;
-  return typeof q?.messageId === "string" ? q.messageId : undefined;
-}
-
-/** A picked-up steer echoes as a user chunk flagged `_meta.goose.steer`. */
-function steerChunkFrom(update: any): string | undefined {
-  const goose = update?._meta?.goose;
-  if (goose?.steer !== true || typeof goose.messageId !== "string") return undefined;
-  return goose.messageId;
-}
+// The meta parsing is the *shipped* one (`src/acp/steer.ts`): the probe proves it
+// against a live agent instead of against a copy that can drift.
 
 async function trySteer(): Promise<void> {
   if (steerSent || !runId || !sessionId) return;
