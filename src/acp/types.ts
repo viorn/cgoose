@@ -393,3 +393,27 @@ export interface SessionExtensionEntry {
   extension: GooseExtension;
   extensionKey: string;
 }
+
+/**
+ * `_goose/unstable/session/steer` — add a user message to the turn that is
+ * already running (`crates/goose/src/agents/state_machine/ops_steer.rs`).
+ *
+ * `expectedRunId` pins the request to the turn we saw start, so a message sent
+ * while the previous turn finishes cannot land in the next one.
+ */
+export interface SteerSessionRequest {
+  sessionId: string;
+  prompt: ContentBlock[];
+  expectedRunId: string;
+}
+
+/**
+ * The steer is *queued*, not delivered: goose drains the queue on a turn
+ * boundary and discards it when the run ends. Correlate `messageId` with the
+ * `user_message_chunk` that echoes the same id (with `_meta.goose.steer: true`)
+ * to know it actually reached the model.
+ */
+export interface SteerSessionResponse {
+  runId: string;
+  messageId: string;
+}

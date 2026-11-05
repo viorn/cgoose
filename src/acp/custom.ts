@@ -11,6 +11,8 @@ import type {
   GooseExtension,
   SetSessionSystemPromptRequest,
   SessionExtensionEntry,
+  SteerSessionRequest,
+  SteerSessionResponse,
 } from "./types";
 
 export const GOOSE_METHODS = {
@@ -83,6 +85,28 @@ export async function listSessionExtensions(
     30_000,
   )) as { extensions?: SessionExtensionEntry[] };
   return result.extensions ?? [];
+}
+
+/**
+ * Add a user message to the turn that is already running (goose "steering").
+ *
+ * The answer is only an *ack* (`{runId, messageId}`): goose picks the message
+ * up at a turn boundary and drops it if the run ends first — see
+ * `src/acp/steer.ts`. `expectedRunId` is required by goose and keeps the
+ * message out of a turn that has not started yet.
+ */
+export async function steerSession(
+  client: AcpClient,
+  sessionId: string,
+  text: string,
+  expectedRunId: string,
+): Promise<SteerSessionResponse> {
+  const request: SteerSessionRequest = {
+    sessionId,
+    prompt: [{ type: "text", text }],
+    expectedRunId,
+  };
+  return (await client.request(GOOSE_METHODS.steer, request, 30_000)) as SteerSessionResponse;
 }
 
 export async function renameSession(

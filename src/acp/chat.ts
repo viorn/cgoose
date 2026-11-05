@@ -90,6 +90,7 @@ import {
   removeSessionExtension,
   renameSession,
   setSessionSystemPrompt,
+  steerSession,
 } from "./custom";
 import { BorderBox, SearchableList } from "./overlay";
 import { DEFAULT_PROFILE_SENTINEL, listSessionSets, type SessionSet } from "../rossii-config";
@@ -108,6 +109,13 @@ import { getProjectSessionDirs, isInsideGitRepo } from "../worktree";
 import { buildExtensionArgs, listGooseExtensions } from "../goose-extensions";
 import { newSessionMeta } from "./session-meta";
 import { applySessionConfig, optionValue, type SessionConfig } from "./session-config";
+import {
+  activeRunIdFromMeta,
+  classifySteerError,
+  planSteer,
+  queuedSteerIdFromMeta,
+  steerChunkId,
+} from "./steer";
 import { ThoughtBlock, parseThoughtCommand } from "./thought";
 import { ToolCallBlock, parseToolCommand } from "./tool-call-block";
 import { toolCallPayload, toolDetailFromRawInput } from "./tool-call-content";
@@ -118,6 +126,29 @@ import type {
   SessionConfigOption,
   SessionNotification,
 } from "./types";
+
+/**
+ * A steer sent into the running turn. goose answers with a `messageId`, acked
+ * (queued) by `_meta.goose.queuedSteer`, and delivers it as a
+ * `user_message_chunk` carrying the same id — the three points where this
+ * entry changes state.
+ */
+interface PendingSteer {
+  text: string;
+  /** The provisional `⤴ steering: …` line, replaced by the real user message
+   *  when the steer lands, or dropped when it never does. */
+  line: Text;
+  /** Assigned when the steer request answers (the ack can arrive first). */
+  messageId?: string;
+  /** True once goose acked the queueing. */
+  acked: boolean;
+  /**
+   * True once the turn's end (or a dead agent) took the entry down and handed
+   * the text back: a late response for it must not queue the text a second time
+   * or restore it over what the user is typing.
+   */
+  abandoned?: boolean;
+}
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -288,6 +319,38 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   let busy = false;
   let exiting = false;
   let agentDead = false;
+  /**
+   * Steering (see ./steer.ts): `text` typed while a turn runs goes into that
+   * turn instead of waiting for it. `activeRunId` is the id goose announces in
+   * `session_info_update`; without it there is nothing to steer yet.
+   */
+  let activeRunId: string | null = null;
+  /** False once goose answers `-32601` to a steer (a build without the method). */
+  let steerSupported = true;
+  /**
+   * `ROSSII_ACP_STEER=0` restores the pre-steering behaviour (Enter during a
+   * turn does nothing, Esc is the way to add context). Anything but 0/1 warns,
+   * exactly like the watchdogs: a typo must not silently change what Enter does.
+   */
+  const steerSetting = env("ACP_STEER");
+  const steeringEnabled = steerSetting !== "0";
+  const steeringWarning =
+    steerSetting !== undefined && steerSetting !== "0" && steerSetting !== "1"
+      ? `ROSSII_ACP_STEER="${steerSetting}" is not 0 or 1 — steering stays enabled`
+      : null;
+  /** One-time hint that mid-turn Enter is a no-op while steering is off. */
+  let steerDisabledHintShown = false;
+  /** One-time warning that this goose has no steering method. */
+  let steerUnsupportedWarned = false;
+  /** Steers of the running turn: a provisional line until goose echoes them. */
+  const steerEntries: PendingSteer[] = [];
+  /**
+   * messageIds goose acked; kept so an ack that arrives before its own response
+   * (two channels, no ordering guarantee) is not lost.
+   */
+  const steerAckIds = new Set<string>();
+  /** One-slot queue: a prompt that could not be steered goes out after the turn. */
+  let pendingPrompt: string | null = null;
   let lastFlush = 0;
   let sessionId: string | null = null;
   /** Config options goose resolved when the session was created (has the model). */
@@ -672,6 +735,38 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     userMessageId = null;
   };
 
+  // ─── Steering (./steer.ts) ────────────────────────────────────────────────
+  // The chat owns the state machine around three events: the send, goose's ack
+  // (`queuedSteer`) and the delivery (`user_message_chunk` with `steer: true`).
+  // A steer that is acked but never delivered dies with the run.
+
+  /** goose acked the queueing — flip the provisional line's wording. */
+  const markSteerQueued = (messageId: string): void => {
+    steerAckIds.add(messageId);
+    const entry = steerEntries.find((candidate) => candidate.messageId === messageId);
+    if (!entry || entry.acked) return;
+    entry.acked = true;
+    entry.line.setText(pc.dim(`⤴ steer queued: ${entry.text}`));
+    tui.requestRender();
+  };
+
+  /** Hand the entry the delivered chunk belongs to back to the caller. */
+  const takeSteer = (messageId: string): PendingSteer | null => {
+    const index = steerEntries.findIndex((entry) => entry.messageId === messageId);
+    if (index === -1) return null;
+    steerAckIds.delete(messageId);
+    return steerEntries.splice(index, 1)[0];
+  };
+
+  /** Forget a steer that will not be delivered and take its line down. */
+  const dropSteer = (entry: PendingSteer): void => {
+    const index = steerEntries.indexOf(entry);
+    if (index !== -1) steerEntries.splice(index, 1);
+    if (entry.messageId) steerAckIds.delete(entry.messageId);
+    transcript.removeChild(entry.line);
+    tui.requestRender();
+  };
+
   /** Close the current agent message block (a tool call splits the answer). */
   const closeMessage = (): void => {
     if (currentMd) {
@@ -767,13 +862,21 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       }
       case "user_message_chunk": {
         if (update.content?.type === "text") {
+          // A steer that the running turn picked up is a *live* user message:
+          // it must be rendered even though `busy` is true (the replay guard
+          // below would swallow it). It takes the provisional line's place.
+          const steerId = steerChunkId(update);
+          if (steerId) {
+            const entry = takeSteer(steerId);
+            if (entry) transcript.removeChild(entry.line);
+          } else if (busy) break;
           // A live turn already echoed the prompt locally; replay
           // (session/load) arrives while idle and must be rendered. Chunks of
           // one message are merged into a single line.
-          if (busy) break;
           closeThought();
           closeMessage();
-          const messageId = typeof update.messageId === "string" ? update.messageId : null;
+          const messageId =
+            steerId ?? (typeof update.messageId === "string" ? update.messageId : null);
           if (userLine && messageId && userMessageId && messageId !== userMessageId) {
             closeUser();
           }
@@ -849,6 +952,12 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
           sessionTitle = update.title;
           renderHeader();
         }
+        // Steering rides on this update: the run id while a turn is live (null
+        // when it ends) and the ack of a queued steer (see ./steer.ts).
+        const run = activeRunIdFromMeta(update._meta);
+        if (run !== undefined) activeRunId = run;
+        const ackedId = queuedSteerIdFromMeta(update._meta);
+        if (ackedId) markSteerQueued(ackedId);
         break;
       }
       default:
@@ -1227,11 +1336,6 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
    */
   const promptInEditor = async (): Promise<void> => {
     if (!sessionId) return;
-    if (busy) {
-      transcript.addChild(new Text(pc.yellow("⚠ Cannot open the editor while a turn is in progress."), 1, 0));
-      tui.requestRender();
-      return;
-    }
     const command = externalEditorCommand();
     let dir: string;
     let file: string;
@@ -1289,7 +1393,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
     // The text becomes the prompt, so the composer's copy must not be sent twice.
     editor.setText("");
-    await submitPrompt(text);
+    // Through the same route as Enter: during a turn the result steers the
+    // running one instead of opening a second `session/prompt`.
+    dispatchPrompt(text);
   };
 
   /** True while the composer collects a new session title (`/session rename`
@@ -1716,13 +1822,99 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       void handleCommand(text);
       return;
     }
-    if (busy) return;
-    void submitPrompt(text);
+    dispatchPrompt(text);
+  };
+
+  /**
+   * Route a finished prompt (Enter, `/edit`) to the right place: a second
+   * `session/prompt` while a turn runs is refused by goose — the text belongs
+   * to that turn (steering, ./steer.ts), or it waits for it.
+   */
+  const dispatchPrompt = (text: string): void => {
+    // `ROSSII_ACP_STEER=0` keeps the pre-steering behaviour: the draft goes
+    // back to the composer and Esc is the way to add context mid-turn. (The
+    // editor clears its own buffer on submit, so "do nothing" would drop the
+    // text silently — which is what it used to do.)
+    if (busy && !steeringEnabled) {
+      restoreDraft(text);
+      if (!steerDisabledHintShown) {
+        steerDisabledHintShown = true;
+        transcript.addChild(new Text(
+          pc.dim("Steering is off (ROSSII_ACP_STEER=0): press Esc to cancel the turn before sending."),
+          1, 0,
+        ));
+        tui.requestRender();
+      }
+      return;
+    }
+    const plan = planSteer({ busy, runId: activeRunId, steerSupported, text });
+    switch (plan.kind) {
+      case "command":
+        void handleCommand(text);
+        return;
+      case "idle":
+        void submitPrompt(text);
+        return;
+      case "steer":
+        void submitSteer(text, plan.expectedRunId);
+        return;
+      case "queue":
+        queuePrompt(text);
+        return;
+    }
+  };
+
+  /** One-slot queue: a prompt that could not be steered is sent by `finishTurn`. */
+  const queuePrompt = (text: string): void => {
+    if (pendingPrompt !== null) {
+      const restored = restoreDraft(text);
+      transcript.addChild(new Text(
+        pc.yellow(
+          `⚠ a prompt is already queued for after this turn${restored ? " — this one is back in the composer" : ""}`,
+        ),
+        1, 0,
+      ));
+      tui.requestRender();
+      return;
+    }
+    pendingPrompt = text;
+    transcript.addChild(new Text(pc.dim(`⧗ queued for after this turn: ${text}`), 1, 0));
+    tui.requestRender();
+  };
+
+  /**
+   * Hand a rejected prompt back to the composer. Never a silent loss: when the
+   * composer already holds a draft the caller says so instead.
+   */
+  const restoreDraft = (text: string): boolean => {
+    if (editor.getText().trim() !== "") return false;
+    editor.setText(text);
+    tui.setFocus(editor);
+    return true;
+  };
+
+  /** A canceled run (or a dead agent) drops whatever steer it did not pick up
+   *  (`discard_pending_steers`): say so and give the text back. */
+  const abandonPendingSteers = (reason: string): void => {
+    const abandoned = steerEntries.splice(0);
+    steerAckIds.clear();
+    if (abandoned.length === 0) return;
+    for (const entry of abandoned) {
+      entry.abandoned = true;
+      transcript.removeChild(entry.line);
+    }
+    const restored = restoreDraft(abandoned.map((entry) => entry.text).join("\n\n"));
+    transcript.addChild(new Text(
+      pc.yellow(`⚠ ${reason}${restored ? " — the text is back in the composer" : ""}`),
+      1, 0,
+    ));
+    tui.requestRender();
   };
 
   const finishTurn = (turnError?: string): void => {
     busy = false;
     cancelRequested = false;
+    activeRunId = null;
     setLoader(null);
     // A cancelled turn may leave permission requests hanging — resolve them so
     // the agent→client calls do not stay unanswered and the overlay closes.
@@ -1731,23 +1923,36 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     closeThought();
     closeMessage();
     closeToolBlocks();
+    // Steering dies with the run: goose discards the steers it did not pick up
+    // (`discard_pending_steers`), so a line still on screen would promise a
+    // delivery that cannot happen any more.
+    abandonPendingSteers("steer not delivered (the turn ended)");
     // When the agent itself died, onAgentExit already explained why — do not
     // tell the same story again with the transport error.
     if (turnError && !agentDead) {
       transcript.addChild(new Text(pc.red(`⚠ ${turnError}`), 1, 0));
     }
     tui.requestRender();
+    // A prompt that could not be steered (the turn was ending, this goose has
+    // no steering) goes out now — through a local, so this cannot recurse.
+    const queued = pendingPrompt;
+    pendingPrompt = null;
+    if (queued) void submitPrompt(queued);
   };
 
   // A turn may run for a long time, but not forever: the idle watchdog cancels
   // a silent agent, and the hard cap bounds the whole turn (./timeouts.ts).
 
-  async function submitPrompt(text: string): Promise<void> {
+  async function submitPrompt(text: string, attempt = 0): Promise<void> {
     if (!sessionId || busy) return;
     busy = true;
     cancelRequested = false;
+    // The run id is announced by `session_info_update` while the turn runs; a
+    // stale one from the previous turn would send a steer into the wrong place.
+    activeRunId = null;
     lastAgentActivity = Date.now();
-    transcript.addChild(new Text(pc.bold(`❯ ${text}`), 1, 0));
+    // Only on the first attempt: the retry below must not echo the prompt twice.
+    if (attempt === 0) transcript.addChild(new Text(pc.bold(`❯ ${text}`), 1, 0));
     currentMd = null;
     currentMessageId = null;
     streamBuffer = "";
@@ -1756,8 +1961,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     currentThought = null;
     closeUser();
     toolCallBlocks.clear();
-    setLoader("thinking…");
-    editor.disableSubmit = true;
+    setLoader(steerHint());
     try {
       const result = (await client.prompt(
         sessionId,
@@ -1768,10 +1972,93 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         ? `turn ended: ${result.stopReason}`
         : undefined);
     } catch (error) {
-      finishTurn(String((error as Error)?.message ?? error));
-    } finally {
-      editor.disableSubmit = false;
+      const message = String((error as Error)?.message ?? error);
+      // Our turn is over but goose still holds a run (the window between the
+      // prompt resolving and the run being cleared): retry once instead of
+      // showing a protocol error for a prompt that was never wrong.
+      if (!agentDead && attempt === 0 && /already has active run/i.test(message)) {
+        transcript.addChild(new Text(pc.dim("⧗ the previous turn is still finishing — retrying…"), 1, 0));
+        tui.requestRender();
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+        busy = false;
+        return submitPrompt(text, attempt + 1);
+      }
+      finishTurn(message);
     }
+  }
+
+  /**
+   * Send `text` into the running turn (`_goose/unstable/session/steer`).
+   *
+   * "Accepted" is not "delivered": goose queues the message and picks it up at a
+   * turn boundary, so the provisional `⤴ steering` line is replaced by a real
+   * user message only when goose echoes the chunk back, and is taken down with
+   * a note when the run ends first.
+   */
+  async function submitSteer(text: string, expectedRunId: string): Promise<void> {
+    if (!sessionId) return;
+    const entry: PendingSteer = {
+      text,
+      line: new Text(pc.dim(`⤴ steering: ${text}`), 1, 0),
+      acked: false,
+    };
+    steerEntries.push(entry);
+    transcript.addChild(entry.line);
+    tui.requestRender();
+    try {
+      const response = await steerSession(client, sessionId, text, expectedRunId);
+      // The turn may have ended while the request was in flight — then the entry
+      // is gone and the text is already back in the composer.
+      if (entry.abandoned) return;
+      entry.messageId = response.messageId;
+      // The ack travels on its own channel and can beat this response.
+      if (steerAckIds.has(response.messageId)) markSteerQueued(response.messageId);
+    } catch (error) {
+      const message = String((error as Error)?.message ?? error);
+      dropSteer(entry);
+      // A late failure for a steer the turn's end already took back must not be
+      // reported twice, queued, or restored over the user's draft.
+      if (entry.abandoned) return;
+      switch (classifySteerError(message)) {
+        case "unsupported":
+          // An older goose: same story as the env flag — the text leaves as a
+          // normal prompt once the turn is over, instead of an error nobody can
+          // act on.
+          steerSupported = false;
+          if (!steerUnsupportedWarned) {
+            steerUnsupportedWarned = true;
+            transcript.addChild(new Text(
+              pc.yellow(
+                "⚠ This goose cannot steer a running turn — Enter during a turn now queues the text for after it.",
+              ),
+              1, 0,
+            ));
+          }
+          queuePrompt(text);
+          return;
+        case "no-active-run":
+          // The turn ended between the send and the request: nothing to steer,
+          // but the text is still wanted.
+          queuePrompt(text);
+          return;
+        default: {
+          const restored = restoreDraft(text);
+          transcript.addChild(new Text(
+            pc.yellow(`⚠ steer rejected: ${message}${restored ? " — the text is back in the composer" : ""}`),
+            1, 0,
+          ));
+          tui.requestRender();
+          return;
+        }
+      }
+    }
+  }
+
+  /** Loader hint for a live turn: says what Enter and Esc do right now. */
+  function steerHint(): string {
+    if (!steeringEnabled) return "thinking…";
+    if (!steerSupported) return "thinking… · Esc — cancel";
+    return "thinking… · Enter — add to this turn · Esc — cancel";
   }
 
   tui.addInputListener((data: string): { consume?: boolean } | undefined => {
@@ -1826,6 +2113,14 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       return { consume: true };
     }
     if (busy && sessionId) {
+      // Esc still cancels the whole turn — and goose throws away the steers it
+      // has not picked up yet, so say it before it happens.
+      if (steerEntries.length > 0) {
+        transcript.addChild(new Text(
+          pc.dim("Esc cancels the turn — a steer that is still queued will be discarded."),
+          1, 0,
+        ));
+      }
       client.cancel(sessionId);
       setLoader("cancelling…");
       return { consume: true };
@@ -1906,10 +2201,12 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     if (exiting || agentDead) return;
     agentDead = true;
     busy = false;
+    activeRunId = null;
     setLoader(null);
     cancelAllPermissions();
     closeThought();
     closeToolBlocks();
+    abandonPendingSteers("goose exited before the steer was delivered");
     transcript.addChild(new Text(pc.red("⚠ goose acp exited unexpectedly"), 1, 0));
     for (const line of stderrTail.slice(-5)) {
       transcript.addChild(new Text(pc.dim(line), 1, 0));
@@ -1922,12 +2219,13 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   tui.setFocus(editor);
   renderHeader();
   renderStatus();
-  for (const warning of timeoutWarnings) {
+  for (const warning of [...timeoutWarnings, ...(steeringWarning ? [steeringWarning] : [])]) {
     transcript.addChild(new Text(pc.yellow(`⚠ ${warning}`), 1, 0));
   }
   transcript.addChild(new Text(
     pc.dim(
-      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit, /think, /tool",
+      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit, /think, /tool" +
+        (steeringEnabled ? " · Enter during a turn adds to that turn, Esc cancels it" : ""),
     ),
     1, 0,
   ));
