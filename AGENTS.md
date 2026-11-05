@@ -142,6 +142,23 @@ warns in the TUI and keeps the ACP default.
   (`[...chunk].length`, code points) instead of re-measuring the buffer, which would make a long
   answer quadratic. A tool call splits the answer (`closeMessage`), and each half then carries
   its own label and count.
+- Tool-call blocks (`src/acp/tool-call-block.ts`, `ToolCallBlock`, modelled on `ThoughtBlock`):
+  a `tool_call` opens a block whose chrome bar is `statusIcon · tool name · N chars · hint` (variant
+  C — the command never shares that line). `rawInput` supplies the full command via `setDetail()`
+  (goose's `title` is truncated by `default_tool_title`: first line, 57 chars + "…"), which is
+  wrapped on the following line(s) — at most two lines collapsed, unlimited expanded. The icon is
+  coloured by status (`statusColor`); the status *word* is not printed (the icon carries it). A
+  click or `/tool [toggle|expand|collapse] [all]` expands/collapses; `/tool` alone toggles the most
+  recent block and `all` reaches the whole conversation (`parseToolCommand` is pure and
+  unit-tested). `src/acp/tool-call-content.ts` maps the wire shapes: `toolContentText` unwraps the
+  ACP `ToolCallContent` envelope (`{type:"content", content:{…}}`, `diff`, `terminal`) — the first
+  version tested `content[].type === "text"` and every block stayed at "0 chars" — and
+  `toolCallPayload` returns two operations because goose streams output on `_meta.toolNotification`
+  (`live_output`) and then RESTATES the whole output in the final `content`: `appendContent` for the
+  live chunks, `setContent` (replace) for the final update. `setFinished()` collapses a block unless
+  the user toggled it by hand; `closeToolBlocks()` marks live blocks finished on `finishTurn`,
+  agent exit and after the `session/load` replay, so a resumed conversation has no block stuck on
+  "in progress".
 - Session sets in chat mode (verified live on goose 1.50.0 and 1.57.0 via the probes described in
   `plans/acp-mode-review5.md`):
   - builtins → `goose acp --with-builtin <names>` **and** `{type:"builtin",name}` entries in the
@@ -174,7 +191,7 @@ warns in the TUI and keeps the ACP default.
     (`mode: "set"`, key `rossii`); empty text clears it — same "set is source of
     truth" semantics as classic `--system`. A failure here is non-fatal (warning only)
 - **Live configuration** — no restart: slash commands typed into the composer
-  (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`, `/think`) plus `SelectList`
+  (`/config`, `/provider`, `/model`, `/set`, `/session`, `/rename`, `/fork`, `/think`, `/tool`) plus `SelectList`
   overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
   - provider/model → `session/set_config_option`; the response's `configOptions` are kept, and
     `session/load`'s are read too (`LoadSessionResponse` used to be discarded, which is why the
@@ -274,7 +291,8 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts`, the db-backed session listing and the overlay components — no goose
+  `session-config.ts`, the db-backed session listing, the overlay components and the tool-call
+  block + its `tool-call-content.ts` wire mapping — no goose
   needed), `bun scripts/acp-probe.ts`
   (raw protocol) and `bun scripts/acp-client-smoke.ts` (`src/acp/client.ts` without the TUI; checks the
   `enabledExtensions` and `mcpServers` channels)

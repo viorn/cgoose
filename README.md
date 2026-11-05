@@ -113,9 +113,10 @@ set/provider/model from the project's history, and keeps everything changeable f
 - **Streaming** — assistant text is rendered as it arrives under an `❮ Answer · N chars`
   label that counts the characters received so far, the thinking block that is streaming is
   expanded (and collapses to a `💭 Thought · N chars` bar once the answer starts), so reasoning is
-  visible live but stays out of the way afterwards; a left click (or `/think`) opens it again. Tool
-  calls and their results are printed inline, and the status bar tracks the current set, context
-  usage, tokens and cost.
+  visible live but stays out of the way afterwards; a left click (or `/think`) opens it again. A tool
+  call is a collapsible block too: one chrome line (status icon · tool name · char count · hint)
+  followed by the full command, with the output revealed on expand (a left click or `/tool`); the
+  bar tracks the current set, context usage, tokens and cost.
 - **Its own screen** — the chat owns the alternate screen and scrolls the transcript itself
   (mouse wheel, PgUp/PgDn, Ctrl+Shift+F to search) while the composer stays pinned at the bottom.
   Streaming never yanks the view back. On exit the transcript is printed to the normal screen, so
@@ -142,6 +143,7 @@ Type them into the composer:
 | `/fork` | Copy the conversation into a new session |
 | `/edit` | Write the prompt in `$VISUAL`/`$EDITOR` — it is sent when the editor closes |
 | `/think [expand\|collapse] [all]` | Expand/collapse thinking blocks (bare `/think` toggles the last one) |
+| `/tool [toggle\|expand\|collapse] [all]` | Expand/collapse tool call blocks (bare `/tool` toggles the last one, `all` covers the conversation) |
 | `/settings` (alias of `/config`) | Same menu as `/config` |
 
 ### Keyboard shortcuts
