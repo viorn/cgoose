@@ -36,6 +36,7 @@
  *   /session           → switch (session/load), new, rename, fork
  *   /rename · /fork    → session title / `session/fork` copy
  *   /think             → expand/collapse thinking blocks (./thought.ts)
+ *   /tool              → expand/collapse tool call blocks (./tool-call-block.ts)
  * Every switch re-applies the pair the wizard chose and reconciles extensions
  * against the selected set, so the set stays the single source of truth.
  */
@@ -108,6 +109,8 @@ import { buildExtensionArgs, listGooseExtensions } from "../goose-extensions";
 import { newSessionMeta } from "./session-meta";
 import { applySessionConfig, optionValue, type SessionConfig } from "./session-config";
 import { ThoughtBlock, parseThoughtCommand } from "./thought";
+import { ToolCallBlock, parseToolCommand } from "./tool-call-block";
+import { toolCallPayload, toolDetailFromRawInput } from "./tool-call-content";
 import type {
   GooseExtension,
   PromptResponse,
@@ -208,19 +211,6 @@ function formatCost(cost: any): string {
   return currency.toUpperCase() === "USD" ? ` · $${amount}` : ` · ${amount} ${currency}`;
 }
 
-interface ToolLine {
-  component: Text;
-  title: string;
-  status: string;
-}
-
-const STATUS_ICON: Record<string, string> = {
-  pending: "⏳",
-  in_progress: "🔨",
-  completed: "✅",
-  failed: "❌",
-};
-
 /** ACP `fs/read_text_file` default window (the spec suggests 2000 lines). */
 const DEFAULT_READ_LIMIT = 2000;
 
@@ -292,7 +282,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   let userLine: Text | null = null;
   let userBuffer = "";
   let userMessageId: string | null = null;
-  const toolLines = new Map<string, ToolLine>();
+  const toolCallBlocks = new Map<string, ToolCallBlock>();
+  /** Every tool block of the conversation, for `/tool` (the map above is per turn). */
+  const toolBlocks: ToolCallBlock[] = [];
   let busy = false;
   let exiting = false;
   let agentDead = false;
@@ -663,6 +655,16 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     }
   };
 
+  /**
+   * Close every tool block that is still live. A cancelled turn, a dead agent
+   * or a replayed history must not leave a block stuck at "in progress".
+   */
+  const closeToolBlocks = (): void => {
+    for (const block of toolCallBlocks.values()) {
+      if (!block.isFinished) block.setFinished();
+    }
+  };
+
   /** Close the replayed user message block (chunks of one message are merged). */
   const closeUser = (): void => {
     userLine = null;
@@ -808,22 +810,32 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
         closeUser();
         closeThought();
         closeMessage();
-        const existing = toolLines.get(update.toolCallId);
+        const existing = toolCallBlocks.get(update.toolCallId);
         // Merge with the stored status: a partial `tool_call_update` without a
-        // status must not demote an already finished line back to "in progress".
+        // status must not demote an already finished block back to "in progress".
         const status = update.status ?? existing?.status ?? "";
-        const icon = STATUS_ICON[status] ?? "🔨";
         const title = update.title ?? existing?.title ?? update.toolCallId;
-        const line = `${icon} ${title}`;
-        if (existing) {
-          existing.title = title;
-          existing.status = status;
-          existing.component.setText(line);
-        } else {
-          const comp = new Text(line, 1, 0);
-          toolLines.set(update.toolCallId, { component: comp, title, status });
-          transcript.addChild(comp);
+        const block = existing ?? new ToolCallBlock({
+          onToggle: () => tui.requestRender(),
+          // Only the alternate screen captures the mouse; on the main screen the
+          // bar points at `/tool` instead of promising a click.
+          clickable: altScreen,
+        });
+        if (!existing) {
+          toolCallBlocks.set(update.toolCallId, block);
+          toolBlocks.push(block);
+          transcript.addChild(block);
         }
+        block.setTitle(title);
+        block.setStatus(status);
+        // The full command: goose truncates its own title to 57 characters.
+        block.setDetail(toolDetailFromRawInput(update.rawInput));
+        // Live output arrives on its own channel (`_meta.toolNotification`), the
+        // final `content` restates the whole output — so it replaces the buffer.
+        const payload = toolCallPayload(update);
+        if (payload.replace !== undefined) block.setContent(payload.replace);
+        if (payload.append !== undefined) block.appendContent(payload.append);
+        if (status === "completed" || status === "failed") block.setFinished();
         tui.requestRender();
         break;
       }
@@ -890,6 +902,35 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     const blocks = currentThought ? [...thoughtBlocks, currentThought] : thoughtBlocks;
     if (blocks.length === 0) {
       transcript.addChild(new Text(pc.dim("No thoughts in this conversation yet."), 1, 0));
+      tui.requestRender();
+      return;
+    }
+    const targets = command.all ? blocks : [blocks[blocks.length - 1]];
+    for (const block of targets) {
+      if (command.action === "expand") block.setExpanded(true);
+      else if (command.action === "collapse") block.setExpanded(false);
+      else block.toggle();
+    }
+    tui.requestRender();
+  };
+
+  // ─── Tool call toggle (`/tool`) ────────────────────────────────────────────
+
+  const toggleAllTools = (args: string[]): void => {
+    const command = parseToolCommand(args);
+    if (!command) {
+      transcript.addChild(new Text(
+        pc.yellow("⚠ Usage: /tool [toggle|expand|collapse] [all]"),
+        1, 0,
+      ));
+      tui.requestRender();
+      return;
+    }
+    // The map outlives a turn: `/tool` reaches the whole conversation, not
+    // just the block that happens to be streaming right now.
+    const blocks = toolBlocks;
+    if (blocks.length === 0) {
+      transcript.addChild(new Text(pc.dim("No tool calls in this conversation yet."), 1, 0));
       tui.requestRender();
       return;
     }
@@ -1103,10 +1144,13 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       sessionTitle = target.name;
       // The replay may end on a thought or an assistant chunk; close those
       // blocks, or the last one stays "Thinking…" and never joins
-      // `thoughtBlocks` (only the mouse could toggle it then).
+      // `thoughtBlocks` (only the mouse could toggle it then). Replayed tool
+      // calls are closed the same way — a resumed conversation must not show
+      // them as still running.
       closeUser();
       closeMessage();
       closeThought();
+      closeToolBlocks();
       if (loaded?.configOptions) newSessionConfigOptions = loaded.configOptions;
       transcript.addChild(new Text(pc.dim(`─── Switched to session: ${target.name} (${target.id}) ───`), 1, 0));
       // The wizard's provider/model pair survives the switch: applying it also
@@ -1575,6 +1619,9 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
       case "think":
         toggleAllThoughts(args);
         return;
+      case "tool":
+        toggleAllTools(args);
+        return;
       default:
         transcript.addChild(new Text(pc.yellow(`⚠ Unknown command: /${cmd}. Use /config to open the configuration menu.`), 1, 0));
         tui.requestRender();
@@ -1683,6 +1730,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     closeUser();
     closeThought();
     closeMessage();
+    closeToolBlocks();
     // When the agent itself died, onAgentExit already explained why — do not
     // tell the same story again with the transport error.
     if (turnError && !agentDead) {
@@ -1707,7 +1755,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     answerChars = 0;
     currentThought = null;
     closeUser();
-    toolLines.clear();
+    toolCallBlocks.clear();
     setLoader("thinking…");
     editor.disableSubmit = true;
     try {
@@ -1861,6 +1909,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
     setLoader(null);
     cancelAllPermissions();
     closeThought();
+    closeToolBlocks();
     transcript.addChild(new Text(pc.red("⚠ goose acp exited unexpectedly"), 1, 0));
     for (const line of stderrTail.slice(-5)) {
       transcript.addChild(new Text(pc.dim(line), 1, 0));
@@ -1878,7 +1927,7 @@ export async function runAcpChat(opts: AcpChatOptions): Promise<void> {
   }
   transcript.addChild(new Text(
     pc.dim(
-      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit, /think",
+      "Type /config to change provider, model, set or session live · Ctrl+P config · Ctrl+O model · Ctrl+E $EDITOR · /rename, /fork, /edit, /think, /tool",
     ),
     1, 0,
   ));

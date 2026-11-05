@@ -231,12 +231,24 @@ export interface UserMessageChunkUpdate {
   messageId?: string;
 }
 
+/**
+ * One entry of a tool call's `content`. ACP wraps every result in this union —
+ * the text lives one level deeper (`{type:"content", content:{type:"text",…}}`),
+ * which is why `content?: ContentBlock[]` was wrong and the tool blocks counted
+ * zero characters.
+ */
+export type ToolCallContent =
+  | { type: "content"; content: ContentBlock }
+  | { type: "diff"; path: string; oldText?: string | null; newText: string }
+  | { type: "terminal"; terminalId: string }
+  | ({ type: string } & Record<string, unknown>);
+
 export interface ToolCallUpdate {
   sessionUpdate: "tool_call" | "tool_call_update";
   toolCallId: string;
   title?: string;
   status?: "pending" | "in_progress" | "completed" | "failed";
-  content?: ContentBlock[];
+  content?: ToolCallContent[];
   locations?: unknown[];
   rawInput?: unknown;
   rawOutput?: unknown;
