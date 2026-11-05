@@ -75,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/viorn/rossii/main/install-release.s
 
 Fetches the newest GitHub release, checks its SHA-256 and installs the binary to
 `~/.local/bin/rossii`. Pin a tag or a target directory with
-`sh -s -- --version v3.3.0 --dir /usr/local/bin`; `--help` shows the rest.
+`sh -s -- --version v3.4.0 --dir /usr/local/bin`; `--help` shows the rest.
 
 ### Option 2: Standalone binary (no runtime needed)
 
