@@ -28,7 +28,7 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-import { formatCharCount } from "../utils";
+import { formatCharCount, hintAccent } from "../utils";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -291,13 +291,14 @@ export class ToolCallBlock implements Component {
   /**
    * The one-line bar: icon (which carries the status), tool name, output size
    * (only when there is output) and what a click does. The status word is
-   * deliberately absent — the icon already says it.
+   * deliberately absent — the icon already says it, and the hint uses the
+   * shared accent rather than the status colour.
    */
   private renderBar(width: number): string {
     const colorFn = statusColor(this._status);
     const parts = [colorFn(this.statusIcon), this.toolName()];
     if (this.chars > 0) parts.push(`${formatCharCount(this.chars)} chars`);
-    const hint = colorFn(this.hint(!this.expanded));
+    const hint = hintAccent(this.hint(!this.expanded));
     const bar = `${parts.join(" · ")} · ${hint}`;
     return visibleWidth(bar) > width ? truncateToWidth(bar, width, "…", true) : bar;
   }

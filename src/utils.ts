@@ -4,6 +4,17 @@
 
 import { basename, resolve } from "node:path";
 
+import pc from "picocolors";
+
+// ─── Shared presentation ─────────────────────────────────────────────────────
+
+/**
+ * Accent of the expand/collapse hint on the collapsible chat blocks (thought
+ * and tool call). One colour for both, independent of the block's status: the
+ * hint says what a click does, it is not a state.
+ */
+export const hintAccent = pc.cyan;
+
 // ─── Environment ─────────────────────────────────────────────────────────────
 
 /**

@@ -20,7 +20,7 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-import { formatCharCount } from "../utils";
+import { formatCharCount, hintAccent } from "../utils";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -33,12 +33,6 @@ const HINT_EXPAND_MOUSE = "click to expand";
 const HINT_COLLAPSE_MOUSE = "click to collapse";
 const HINT_EXPAND_KEYS = "/think expand";
 const HINT_COLLAPSE_KEYS = "/think collapse";
-
-/**
- * Accent of the expand/collapse hint, so it reads as an action rather than as
- * part of the label — the same treatment the tool block gives its own hint.
- */
-const hintColor = pc.cyan;
 
 /**
  * Left indent of every line — the column `Text`/`Markdown` blocks use, so the
@@ -215,12 +209,12 @@ export class ThoughtBlock implements Component {
 
   /** Header shown above the expanded markdown; doubles as the collapse bar. */
   private renderHeader(width: number): string[] {
-    return [this.fitBar(`${barLabel(this.finished, this.chars)} · ${hintColor(this.hint(false))}`, width)];
+    return [this.fitBar(`${barLabel(this.finished, this.chars)} · ${hintAccent(this.hint(false))}`, width)];
   }
 
   /** The single line a collapsed (or untouched, finished) block takes. */
   private renderBar(width: number): string[] {
-    return [this.fitBar(`${barLabel(this.finished, this.chars)} · ${hintColor(this.hint(true))}`, width)];
+    return [this.fitBar(`${barLabel(this.finished, this.chars)} · ${hintAccent(this.hint(true))}`, width)];
   }
 
   /** What the user can do with this block, given where it is rendered. */
