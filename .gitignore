@@ -8,3 +8,4 @@ cgoose-*-linux-*
 ${OUTFILE}
 .worktree/
 .serena/
+.gigacode_vsc/
