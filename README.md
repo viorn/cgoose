@@ -123,6 +123,15 @@ set/provider/model from the project's history, and keeps everything changeable f
   it stays in your scrollback. `ROSSII_CHAT_MAIN_SCREEN=1` restores the inline renderer.
 - **Permissions** — `session/request_permission` requests appear as framed dialogs (queued when
   several tool calls ask at once); Esc or Ctrl+C rejects them. During a turn Esc/Ctrl+C cancels it.
+- **Adding to a running turn (steering)** — Enter during a turn does **not** throw away what the
+  model has already done: it adds a message to that turn (goose's `session/steer`). The transcript
+  shows `⤴ steering: …` on send, `⤴ steer queued: …` once the agent acknowledges it, and a real
+  `❯ …` line at the moment the model actually receives the text — on a turn boundary (after a
+  finished answer or a tool result), so a long generation makes it wait. Esc still cancels the
+  turn, and a steer still in the queue dies with it: the chat says so and hands the text back to
+  the composer. On a goose without steering the chat warns once and sends the text as a normal
+  prompt after the turn; `ROSSII_ACP_STEER=0` turns the feature off, and then Enter during a turn
+  does nothing and the draft stays in the composer.
 - **History** — resuming replays the conversation into the chat; sessions are read straight from
   `sessions.db`, so sessions created by `goose` itself are listed too.
 - **Watchdogs** — a silent agent (no update for 5 minutes) is cancelled, and one turn is capped at
@@ -163,9 +172,11 @@ nothing is sent, the draft stays. The chat takes the alternate screen back after
 
 Everything a command does is also reachable from the menus, and a set change, session switch or
 fork is refused while a turn is running (provider/model switches are allowed and apply to the next
-turn). Every menu — provider, model, set, session, `/config` itself — carries a filter line: type to
-narrow the list by **substring** (`flash` finds `deepseek-v4-flash`), Backspace widens it again, and
-the arrows, Enter and Esc keep behaving exactly as before.
+turn, and `/edit` works mid-turn — its buffer steers the running turn). The two keys that decide a
+running turn are Enter (add to it, see steering above) and Esc (cancel it). Every menu — provider,
+model, set, session, `/config` itself — carries a filter line: type to narrow the list by
+**substring** (`flash` finds `deepseek-v4-flash`), Backspace widens it again, and the arrows, Enter
+and Esc keep behaving exactly as before.
 
 ### Changing things live
 
@@ -322,6 +333,7 @@ New sessions can run in a dedicated worktree at `<repo>/.worktree/<name>` on a m
 | `ROSSII_ACP_MODE` | `acp` | `classic` hands the terminal to `goose session` instead of rossii's chat |
 | `ROSSII_ACP_IDLE_TIMEOUT_MS` | `300000` | cancel a turn when the agent sends nothing for this long (`0` disables) |
 | `ROSSII_ACP_PROMPT_TIMEOUT_MS` | `14400000` | absolute cap on a single turn (`0` disables) |
+| `ROSSII_ACP_STEER` | `1` | `0` disables steering: Enter during a turn adds nothing to it |
 | `ROSSII_CHAT_MAIN_SCREEN` | unset | `1` renders the chat inline instead of on the alternate screen |
 | `ROSSII_NO_WORKTREE` | set by default | `1` skips worktree creation |
 | `ROSSII_FORCE_WORKTREE` | unset | `1` forces worktrees (overrides the above) |
@@ -349,6 +361,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 | `src/acp/extensions.ts` | session set → ACP extension list (`planGooseExtensions`, `planProfileExtensions`, diffing) |
 | `src/acp/session-config.ts` | provider/model through `session/set_config_option` |
 | `src/acp/session-meta.ts` | `session/new` `_meta` (session title, client identity, extension list) |
+| `src/acp/steer.ts` | steering a running turn: meta parsing and the Enter/queue decision |
 | `src/acp/overlay.ts` | framed and searchable overlay components |
 | `src/acp/timeouts.ts` | turn watchdogs |
 | `src/launcher.ts` | shared launch preparation (worktree, env, secrets) and the classic mode |
@@ -358,7 +371,7 @@ rossii (Bun + pi-tui) ── stdio JSON-RPC 2.0 ──> goose acp
 
 ```bash
 bun run check     # tsc
-bun run test      # unit tests: extensions, session meta/config, sessions db, client, overlays
+bun run test      # unit tests: extensions, session meta/config, steering, sessions db, client, overlays
 bun run acp:probe # raw ACP session against a real goose
 bun run acp:smoke # AcpClient without the TUI
 ```

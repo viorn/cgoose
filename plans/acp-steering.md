@@ -1,7 +1,7 @@
 # Chat mode: steering — доп. контекст во время хода модели
 
 - **Дата:** 2026-11-05
-- **Статус:** исследование завершено вживую, план работ готов, реализация **не начата**
+- **Статус:** реализовано (`src/acp/steer.ts`, `custom.ts`, `types.ts`, `chat.ts`, `scripts/acp-steer-test.ts`, доки)
 - **Проверено вживую:** goose **1.57.0** (`~/.local/bin/goose`), скрипт `scripts/acp-steer-probe.ts`
   (полный трейс ниже). Сверено с исходниками `~/sources/goose` (тег `v1.57.0`):
   `crates/goose/src/acp/server.rs`, `crates/goose-sdk-types/src/custom_requests.rs`,
@@ -9,6 +9,39 @@
 - **Эталон UX у goose:** десктоп-клиент — `ui/desktop/src/acp/sessionNotificationAdapter.ts`,
   `ui/desktop/src/acp/chatSessionStore.ts` (`pendingLocalSteerMessageIds`), `ui/desktop/src/hooks/useChatSession.ts`
   (`onSteerQueuedMessage`), `ui/desktop/src/acp/prompt.ts` (`acpSteerSession`)
+
+## Что получилось в итоге (2026-11-05)
+
+Реализованы все восемь шагов; отличия от плана и то, что выяснилось по ходу:
+
+- **`steer.ts`** — как задумано, плюс `classifySteerError()`: `-32601` → `unsupported`,
+  `no active run` / несовпадение `expectedRunId` / `session already has active run` → `no-active-run`
+  (все три — фоллбек в очередь), остальное → ошибка на экране. Она же покрывает гонку
+  «наш ход кончился, а goose ещё держит run»: `submitPrompt` в этом случае повторяет запрос один раз
+  через 700 мс вместо протокольной ошибки.
+- **`ROSSII_ACP_STEER=0`** — не очередь, а «как раньше»: Enter во время хода возвращает черновик в
+  композер и один раз печатает подсказку. Важное открытие: `Editor` **сам очищает буфер** перед
+  вызовом `onSubmit`, поэтому прежний `if (busy) return;` молча терял набранный текст — теперь он
+  возвращается (`restoreDraft`).
+- **Probe переведён на shipped-код**: `scripts/acp-steer-probe.ts` импортирует парсинг меты из
+  `src/acp/steer.ts`, так что живой прогон проверяет именно то, что исполняется в чате.
+- **Живые наблюдения (1.57.0), которых не было в исходном плане:** ack (`queuedSteer`) может прийти
+  **до** ответа на запрос — `steerAckIds` это держит; `user_message_chunk` со `steer: true` приходит
+  на границе (после `agent_message_chunk`/результата инструмента); `session_info_update` с
+  `activeRunId: null` может прийти раньше, чем резолвится `session/prompt`; steer **разрезает**
+  стримящийся ответ, поэтому в чате после доставки видно `❮ Answer · 10 chars` / `STEERED-OK`.
+- **Живая проверка в TUI (tmux, goose 1.57.0, `rossii mn`):**
+  - `⤴ steer queued: ALSO: mention tea at the end.` — во время хода, лоадер
+    `thinking… · Enter — add to this turn · Esc — cancel`;
+  - после доставки — настоящая строка `❯ STOP counting now. Reply with exactly STEERED-OK…`, ход
+    продолжился той же сессией, ответ `STEERED-OK` (в `sessions.db`:
+    `steer_7df72f8f-… | user | … | {"steer":true}`);
+  - Esc после steer → `Esc cancels the turn — a steer that is still queued will be discarded.`,
+    затем `⚠ steer not delivered (the turn ended) — the text is back in the composer`, оба текста в
+    композере, строки-заглушки убраны;
+  - `ROSSII_ACP_STEER=0`: строка-подсказка про Enter из шапки исчезла, Enter во время хода ничего не
+    добавляет к ходу, печатает один раз `Steering is off (ROSSII_ACP_STEER=0): …` и возвращает текст;
+  - обычный Enter после конца хода работает как раньше.
 
 ## Проблема
 

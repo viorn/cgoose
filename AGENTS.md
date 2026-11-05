@@ -114,7 +114,8 @@ warns in the TUI and keeps the ACP default.
   requests, methods `_goose/unstable/...`), `extensions.ts` (spec → ACP `mcpServers`,
   pure and unit-tested), `session-meta.ts` (`session/new` `_meta`, pure and unit-tested),
   `session-config.ts` (provider/model via `session/set_config_option`, pure planning +
-  non-throwing apply, unit-tested), `chat.ts` (pi-tui based chat UI)
+  non-throwing apply, unit-tested), `steer.ts` (steering a running turn: meta parsing and
+  the Enter decision, pure and unit-tested), `chat.ts` (pi-tui based chat UI)
 - Classic mode still lives in `src/launcher.ts`; shared launch preparation (worktree,
   env, secrets) is `prepareLaunch()`, used by both modes
 - Rendering: the chat owns the **alternate screen** — `TuiAltScreen` with an explicit
@@ -142,6 +143,22 @@ warns in the TUI and keeps the ACP default.
   (`[...chunk].length`, code points) instead of re-measuring the buffer, which would make a long
   answer quadratic. A tool call splits the answer (`closeMessage`), and each half then carries
   its own label and count.
+- **Steering** (`src/acp/steer.ts`, pure + unit-tested): Enter during a turn adds a user message to
+  the *running* prompt (`_goose/unstable/session/steer`) instead of doing nothing — no second
+  `session/prompt`, no cancel, no lost work. goose announces the turn through
+  `session_info_update` → `_meta.goose.activeRunId` (string on start, `null` on end); the steer is
+  pinned to that id (`expectedRunId`) and answered `{runId, messageId}`, acked by
+  `_meta.goose.queuedSteer` (the ack can beat the response — `steerAckIds` holds it) and finally
+  echoed as a `user_message_chunk` with `_meta.goose.steer: true` and the same id. "Accepted" is not
+  "delivered": goose drains the queue on a turn boundary (finished assistant message or tool
+  result), so the provisional `⤴ steering: …` / `⤴ steer queued: …` line is replaced by a real
+  `❯ …` only on that echo, and `finishTurn` / `onAgentExit` drop what is left
+  (`abandonPendingSteers`, `discard_pending_steers` on goose's side) with the text back in the
+  composer. Esc keeps cancelling (with a note that queued steers die with the turn), and a steer
+  that cannot be sent (`no active run to steer`, stale run id, `-32601` on an older goose) falls
+  back to a one-slot `pendingPrompt` that `finishTurn` sends as a normal prompt.
+  `ROSSII_ACP_STEER=0` disables the feature (Enter mid-turn restores the draft and says so;
+  anything but `0`/`1` warns, like the watchdogs). Plan and live traces: `plans/acp-steering.md`.
 - Tool-call blocks (`src/acp/tool-call-block.ts`, `ToolCallBlock`, modelled on `ThoughtBlock`):
   a `tool_call` opens a block whose chrome bar is `statusIcon · tool name · N chars · hint` (variant
   C — the command never shares that line). `rawInput` supplies the full command via `setDetail()`
@@ -291,10 +308,12 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts`, the db-backed session listing, the overlay components and the tool-call
-  block + its `tool-call-content.ts` wire mapping — no goose
+  `session-config.ts`, `steer.ts`, the db-backed session listing, the overlay components and the
+  tool-call block + its `tool-call-content.ts` wire mapping — no goose
   needed), `bun scripts/acp-probe.ts`
-  (raw protocol) and `bun scripts/acp-client-smoke.ts` (`src/acp/client.ts` without the TUI; checks the
+  (raw protocol), `bun scripts/acp-steer-probe.ts` (steering against a live agent: run id, ack,
+  pickup, `ids match: YES`; it parses the meta with `src/acp/steer.ts`, so the shipped code is what
+  gets proven) and `bun scripts/acp-client-smoke.ts` (`src/acp/client.ts` without the TUI; checks the
   `enabledExtensions` and `mcpServers` channels)
 
 ## Data Paths
