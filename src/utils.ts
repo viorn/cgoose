@@ -49,6 +49,22 @@ export function formatNumber(value: number): string {
   return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
+/** Threshold at which a character count switches from raw digits to the k suffix. */
+const CHAR_COUNT_THRESHOLD = 1000;
+
+/**
+ * Compact character count: `1234` → `"1.2k"`.
+ *
+ * Shared by the streaming blocks that show their size live — the thought bar
+ * (`💭 Thought · N chars`) and the answer label (`❮ Answer · N chars`) — so both
+ * counters read the same way.
+ */
+export function formatCharCount(chars: number): string {
+  if (chars < CHAR_COUNT_THRESHOLD) return chars.toString();
+  const thousands = chars / CHAR_COUNT_THRESHOLD;
+  return thousands < 10 ? `${thousands.toFixed(1)}k` : `${Math.round(thousands)}k`;
+}
+
 export function generateSessionName(prefix: string): string {
   const now = new Date();
   const pad = (n: number) => n.toString().padStart(2, "0");

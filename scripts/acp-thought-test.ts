@@ -123,6 +123,22 @@ ok("expanded body stays inside the viewport", () => {
   }
 });
 
+ok("the bar and the body share the transcript's one-column indent", () => {
+  // `Text`/`Markdown` blocks sit at column 1; the thought block indents itself,
+  // and the markdown body carries no margin of its own, so the bar and the body
+  // start in the same column instead of the body hanging one step to the right.
+  const indent = (line: string): number => line.length - line.trimStart().length;
+  const lines = streaming("reasoning").render(80);
+  assert.equal(indent(lines[0]), 1, `bar is indented: ${JSON.stringify(lines[0])}`);
+  assert.equal(indent(lines[1]!), 1, `body is indented: ${JSON.stringify(lines[1])}`);
+  assert.equal(indent(finished("reasoning").render(80)[0]), 1, "collapsed bar is indented too");
+});
+
+ok("the block without text yet still shows its (indented) bar", () => {
+  const bar = new ThoughtBlock().render(80)[0];
+  assert.ok(bar.startsWith(" 💭"), `empty block keeps its bar: ${JSON.stringify(bar)}`);
+});
+
 // ─── Toggle ─────────────────────────────────────────────────────────────────
 
 ok("toggle flips the state both ways", () => {

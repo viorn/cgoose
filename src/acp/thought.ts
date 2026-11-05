@@ -20,6 +20,8 @@ import {
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
+import { formatCharCount } from "../utils";
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const BAR_ICON = "💭";
@@ -32,8 +34,13 @@ const HINT_COLLAPSE_MOUSE = "click to collapse";
 const HINT_EXPAND_KEYS = "/think expand";
 const HINT_COLLAPSE_KEYS = "/think collapse";
 
-/** Threshold at which the char count switches from raw to K/m suffix. */
-const K_THRESHOLD = 1000;
+/**
+ * Left indent of every line — the column `Text`/`Markdown` blocks use, so the
+ * block lines up with the rest of the transcript. The markdown body carries no
+ * margin of its own (`paddingX: 0`), which puts the bar and the body in the
+ * same column.
+ */
+const INDENT = 1;
 
 /**
  * Light gray for thought text — distinguishable from white responses. Raw
@@ -64,17 +71,10 @@ const thoughtMarkdownTheme: MarkdownTheme = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Format a character count: 1234 → "1.2k". */
-function formatChars(n: number): string {
-  if (n < K_THRESHOLD) return n.toString();
-  const k = n / K_THRESHOLD;
-  return k < 10 ? `${k.toFixed(1)}k` : `${Math.round(k)}k`;
-}
-
 /** The bits every bar line shares: icon, state, char count. */
 function barLabel(finished: boolean, charCount: number): string {
   const state = finished ? BAR_DONE : BAR_THINKING;
-  return `${BAR_ICON} ${state} · ${formatChars(charCount)} chars`;
+  return `${BAR_ICON} ${state} · ${formatCharCount(charCount)} chars`;
 }
 
 // ─── The `/think` command ────────────────────────────────────────────────────
@@ -142,7 +142,9 @@ export class ThoughtBlock implements Component {
     this.text += chunk;
     this.chars += [...chunk].length;
     if (!this.md) {
-      this.md = new Markdown("", 1, 0, thoughtMarkdownTheme, { color: tint });
+      // No markdown margin of its own: the block supplies the single-column
+      // indent (`INDENT`), so the bar and the body start in the same column.
+      this.md = new Markdown("", 0, 0, thoughtMarkdownTheme, { color: tint });
     }
     this.md.setText(this.text);
   }
@@ -193,9 +195,16 @@ export class ThoughtBlock implements Component {
    * show the markdown they already have.
    */
   render(width: number): string[] {
-    if (!this.expanded) return this.renderBar(width);
-    const body = this.md ? this.md.render(width) : [];
-    return [...this.renderHeader(width), ...body];
+    // Subtracting the indent keeps every line inside the viewport; a block with
+    // no text yet still shows its bar, so it can be collapsed.
+    const inner = Math.max(1, width - INDENT);
+    const lines = this.expanded
+      ? this.md
+        ? [...this.renderHeader(inner), ...this.md.render(inner)]
+        : this.renderHeader(inner)
+      : this.renderBar(inner);
+    const margin = " ".repeat(INDENT);
+    return lines.map((line) => margin + line);
   }
 
   /** Header shown above the expanded markdown; doubles as the collapse bar. */
