@@ -295,6 +295,17 @@ export function handleSessionUpdate(ctx: ChatContext, notification: SessionNotif
       ctx.gooseCommands = parseAvailableCommands(update.availableCommands);
       break;
     }
+    case "config_option_update": {
+      // goose restates the whole option set — model list included — at session
+      // setup and again when a provider switch's background inventory refresh
+      // finishes (its `plan_refresh_jobs` fetch is async, so the synchronous
+      // `set_config_option` response carries the OLD list). Dropping this update
+      // left the model menu showing whatever the last response happened to say.
+      // The current pair is left alone: `changeModel`/`changeProvider` own it.
+      const options = update.configOptions;
+      if (Array.isArray(options)) ctx.newSessionConfigOptions = options;
+      break;
+    }
     case "usage_update": {
       usagePart = `tokens ${update.used}/${update.size}${formatCost(update.cost)}`;
       renderStatus(ctx);

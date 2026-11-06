@@ -20,11 +20,13 @@ import { framed } from "./chat-handlers";
 import { promptInEditor, queuePrompt, submitPrompt } from "./chat-io";
 import { commandRewritesHistory, formatGooseCommandNames } from "./slash-commands";
 import { SearchableList } from "./overlay";
+import { mergeModelOptions } from "./model-options";
 import { selectListTheme } from "./chat-context";
 import {
   addModelToCustomProviderJson,
   getConfigProviders,
   getDiscoveredCustomProviders,
+  getCustomProviderModels,
   isModelInCustomProviderJson,
   type ProviderInfo,
 } from "../config";
@@ -232,12 +234,15 @@ export async function fetchModelsForCurrentProvider(ctx: ChatContext): Promise<v
   ctx.tui.requestRender();
 }
 
-export function showModelMenu(ctx: ChatContext): void {  const options = ctx.newSessionConfigOptions?.find((o) => o.id === "model")?.options ?? [];
-  const items: Array<{ value: string; label: string; description?: string }> =
-    options.map((o) => ({ value: o.value, label: o.name ?? o.value }));
-  if (options.length === 0) {
-    // No list from goose: the API fetch is the way out, so the menu stays open
-    // instead of dead-ending in a warning.
+export function showModelMenu(ctx: ChatContext): void {
+  const gooseOptions = ctx.newSessionConfigOptions?.find((o) => o.id === "model")?.options ?? [];
+  // Same gate as the wizard: only `custom_*` providers keep a JSON file.
+  const customModels = ctx.currentProvider.startsWith("custom_")
+    ? getCustomProviderModels(ctx.currentProvider)
+    : [];
+  const items = mergeModelOptions(gooseOptions, customModels);
+  if (items.length === 0) {
+    // No list from goose, and nothing in the custom provider either.
     ctx.transcript.addChild(new Text(
       pc.dim("goose reported no model list for this session — fetch it from the provider, or use /model <name>."),
       1, 0,
