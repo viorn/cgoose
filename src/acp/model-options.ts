@@ -73,3 +73,59 @@ export function mergeModelOptions(
     ...extras,
   ];
 }
+
+/**
+ * Move the entries this project used most recently to the front, in usage
+ * order (`history[0]` = last used). Everything else keeps its incoming order,
+ * so a caller that hands over goose's list is never re-sorted behind its back.
+ *
+ * Stable: an entry not in `history` never overtakes another such entry. A
+ * history entry with no matching item is ignored here — `orderModelMenu` is
+ * what resurrects it as a selectable model.
+ */
+export function orderByUsage<T extends { value: string }>(
+  items: readonly T[],
+  history: readonly string[],
+): T[] {
+  if (history.length === 0) return [...items];
+  const rank = new Map<string, number>();
+  history.forEach((value, index) => {
+    if (!rank.has(value)) rank.set(value, index);
+  });
+  return [...items].sort((a, b) => {
+    const aRank = rank.get(a.value) ?? Number.POSITIVE_INFINITY;
+    const bRank = rank.get(b.value) ?? Number.POSITIVE_INFINITY;
+    return aRank === bRank ? 0 : aRank - bRank;
+  });
+}
+
+/**
+ * The model menu's entries for one provider, ordered the way the wizard's model
+ * step orders them: the project's `modelHistory[provider]` first (last used on
+ * top), then goose's list, then the provider JSON's extras.
+ *
+ * A model that only the history knows is offered too, labelled `history` — the
+ * wizard does the same, and applying it either works (goose still serves it,
+ * it just stopped advertising it) or fails with a warning from
+ * `applySessionConfig`. Silently hiding a model the user picked last week is
+ * worse than one stale entry.
+ */
+export function orderModelMenu(
+  items: readonly ModelMenuItem[],
+  history: readonly string[],
+): ModelMenuItem[] {
+  const known = new Map(items.map((item) => [item.value, item]));
+  const ordered: ModelMenuItem[] = [];
+  const seen = new Set<string>();
+  for (const value of history) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    ordered.push(known.get(value) ?? { value, label: value, description: "history" });
+  }
+  for (const item of items) {
+    if (seen.has(item.value)) continue;
+    seen.add(item.value);
+    ordered.push(item);
+  }
+  return ordered;
+}

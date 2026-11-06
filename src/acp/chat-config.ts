@@ -9,7 +9,8 @@
 
 import pc from "picocolors";
 import { Text, type SelectListLayoutOptions } from "@earendil-works/pi-tui";
-import { listSessionSets } from "../rossii-config";
+import { listSessionSets, DEFAULT_PROFILE_SENTINEL } from "../rossii-config";
+import { readProjectMeta } from "../project";
 import { getAllSessions } from "../sessions";
 import { isInsideGitRepo, getProjectSessionDirs } from "../worktree";
 import { applySessionConfig } from "./session-config";
@@ -20,7 +21,7 @@ import { framed } from "./chat-handlers";
 import { promptInEditor, queuePrompt, submitPrompt } from "./chat-io";
 import { commandRewritesHistory, formatGooseCommandNames } from "./slash-commands";
 import { SearchableList } from "./overlay";
-import { mergeModelOptions } from "./model-options";
+import { mergeModelOptions, orderByUsage, orderModelMenu } from "./model-options";
 import { selectListTheme } from "./chat-context";
 import {
   addModelToCustomProviderJson,
@@ -147,7 +148,17 @@ export function showProviderMenu(ctx: ChatContext): void {
     ctx.tui.requestRender();
     return;
   }
-  const items = options.map((o) => ({ value: o.value, label: o.name ?? o.value }));
+  // Same order as the wizard's provider step: this project's providers by last
+  // use (`providerHistory[0]` = the one the session runs on), then whatever
+  // order goose reports the rest in. `persistSelection` keeps that history
+  // current after every `/provider` and `/model`, so the two UIs agree.
+  const history = readProjectMeta()?.providerHistory ?? [];
+  const items = orderByUsage(
+    options.map((o) => ({ value: o.value, label: o.name ?? o.value })),
+    history,
+  ).map((item) => item.value === ctx.currentProvider
+    ? { ...item, description: "current" }
+    : item);
   items.push({ value: "cancel", label: "Cancel" });
   showMenu(ctx, "Select Provider", items, (value) => {
     if (value !== "cancel") void changeProvider(ctx, value);
@@ -215,13 +226,19 @@ export async function fetchModelsForCurrentProvider(ctx: ChatContext): Promise<v
     ctx.transcript.addChild(new Text(pc.dim(`Found ${models.length} model(s) at ${provider.name}.`), 1, 0));
     // Model ids are long (`~anthropic/claude-sonnet-latest`) and the context
     // limit needs its own room, so the list is wider than the other menus.
-    showMenu(ctx, `Models from ${provider.name}`, models.map((model) => ({
-      value: model.id,
-      label: model.id,
-      description: model.contextLimit
-        ? `context: ${formatNumber(model.contextLimit)}`
-        : "context: 128k default",
-    })), (value) => {
+    // Reordered by use like the main model menu, but never extended from the
+    // history: this list is what the API serves right now.
+    const ordered = orderByUsage(
+      models.map((model) => ({
+        value: model.id,
+        label: model.id,
+        description: model.contextLimit
+          ? `context: ${formatNumber(model.contextLimit)}`
+          : "context: 128k default",
+      })),
+      readProjectMeta()?.modelHistory?.[ctx.currentProvider] ?? [],
+    );
+    showMenu(ctx, `Models from ${provider.name}`, ordered, (value) => {
       const picked = models.find((model) => model.id === value);
       if (picked) void applyFetchedModel(ctx, picked, provider);
     }, { width: 88, layout: { maxPrimaryColumnWidth: 52 } });
@@ -240,9 +257,17 @@ export function showModelMenu(ctx: ChatContext): void {
   const customModels = ctx.currentProvider.startsWith("custom_")
     ? getCustomProviderModels(ctx.currentProvider)
     : [];
-  const items = mergeModelOptions(gooseOptions, customModels);
+  // The wizard's model step order, so a model picked last week is still on top:
+  // this project's history for THIS provider, then goose's list, then the
+  // provider JSON's extras. A model only the history knows survives as a
+  // `history` entry instead of vanishing from the menu.
+  const history = readProjectMeta()?.modelHistory?.[ctx.currentProvider] ?? [];
+  const items = orderModelMenu(mergeModelOptions(gooseOptions, customModels), history)
+    .map((item) => item.value === ctx.currentModel
+      ? { ...item, label: `✦ ${item.label}`, description: item.description ?? "current" }
+      : item);
   if (items.length === 0) {
-    // No list from goose, and nothing in the custom provider either.
+    // No list from goose, nothing in the custom provider and no history either.
     ctx.transcript.addChild(new Text(
       pc.dim("goose reported no model list for this session — fetch it from the provider, or use /model <name>."),
       1, 0,
@@ -262,11 +287,27 @@ export function showModelMenu(ctx: ChatContext): void {
   }, { width: 88, layout: { maxPrimaryColumnWidth: 52 } });
 }
 
+/** Project-meta set key (`""` = None, the `__default__` sentinel = goose's own
+ *  profile, else a set's name) → the value this menu uses for the same choice. */
+function toMenuSetValue(key: string): string {
+  if (key === DEFAULT_PROFILE_SENTINEL) return "default";
+  return key === "" ? "none" : key;
+}
+
 export function showSetMenu(ctx: ChatContext): void {
   const sets = listSessionSets();
-  const items = Object.values(sets).map((s) => ({ value: s.name, label: s.title }));
-  items.push({ value: "default", label: "Default (goose config.yaml)" });
-  items.push({ value: "none", label: "None" });
+  // `setHistory` stores keys ("" = None, the `__default__` sentinel = goose's
+  // own profile, else the set's name) while this menu has its own values for
+  // the two special entries — translated before ordering so the menu matches
+  // the wizard's set step.
+  const history = (readProjectMeta()?.setHistory ?? []).map(toMenuSetValue);
+  const items = orderByUsage([
+    ...Object.values(sets).map((s) => ({ value: s.name, label: s.title })),
+    { value: "default", label: "Default (goose config.yaml)" },
+    { value: "none", label: "None" },
+  ], history).map((item) => item.value === toMenuSetValue(ctx.currentSetKey)
+    ? { ...item, description: "current" }
+    : item);
   items.push({ value: "cancel", label: "Cancel" });
   showMenu(ctx, "Select Set", items, (value) => {
     if (value !== "cancel") void changeSet(ctx, value);

@@ -21,7 +21,7 @@
 
 import assert from "node:assert/strict";
 
-import { mergeModelOptions } from "../src/acp/model-options";
+import { mergeModelOptions, orderByUsage, orderModelMenu } from "../src/acp/model-options";
 
 type Check = [name: string, run: () => void];
 
@@ -115,6 +115,90 @@ ok("both sources empty gives an empty list", () => {
 ok("an empty JSON list leaves goose's entries untouched", () => {
   const goose = [{ value: "id-1", name: "N" }];
   assert.deepEqual(mergeModelOptions(goose, []), [{ value: "id-1", label: "N" }]);
+});
+
+// ─── usage history (the wizard's order, shared with the chat menus) ──────────
+
+ok("orderByUsage: history entries come first, in history order", () => {
+  const ordered = orderByUsage(
+    [{ value: "a" }, { value: "b" }, { value: "c" }, { value: "d" }],
+    ["c", "a"],
+  );
+  assert.deepEqual(ordered.map((item) => item.value), ["c", "a", "b", "d"]);
+});
+
+ok("orderByUsage: the tail keeps the caller's order (goose's)", () => {
+  // Only the used entries move; goose's own ordering of the rest is not ours
+  // to rewrite.
+  const ordered = orderByUsage([{ value: "z" }, { value: "y" }, { value: "x" }], ["y"]);
+  assert.deepEqual(ordered.map((item) => item.value), ["y", "z", "x"]);
+});
+
+ok("orderByUsage: no history leaves the list untouched", () => {
+  const items = [{ value: "a" }, { value: "b" }];
+  assert.deepEqual(orderByUsage(items, []).map((item) => item.value), ["a", "b"]);
+});
+
+ok("orderByUsage: a history entry that is not in the list is ignored", () => {
+  const ordered = orderByUsage([{ value: "a" }, { value: "b" }], ["gone", "b"]);
+  assert.deepEqual(ordered.map((item) => item.value), ["b", "a"]);
+});
+
+ok("orderByUsage: does not mutate the input", () => {
+  const items = [{ value: "a" }, { value: "b" }];
+  orderByUsage(items, ["b"]);
+  assert.deepEqual(items.map((item) => item.value), ["a", "b"]);
+});
+
+ok("orderModelMenu: this provider's history first, then goose, then the JSON", () => {
+  const merged = mergeModelOptions(
+    [
+      { value: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+      { value: "qwen/qwen3.6-flash", name: "Qwen 3.6 Flash" },
+    ],
+    [{ name: "json-only" }],
+  );
+  const ordered = orderModelMenu(merged, ["qwen/qwen3.6-flash"]);
+  assert.deepEqual(
+    ordered.map((item) => item.value),
+    ["qwen/qwen3.6-flash", "deepseek/deepseek-v4-flash", "json-only"],
+  );
+  assert.equal(ordered[0].label, "Qwen 3.6 Flash", "the goose label survives reordering");
+});
+
+ok("orderModelMenu: history is ordered last-used first", () => {
+  const merged = mergeModelOptions([
+    { value: "a" },
+    { value: "b" },
+    { value: "c" },
+  ], []);
+  const ordered = orderModelMenu(merged, ["c", "a"]);
+  assert.deepEqual(ordered.map((item) => item.value), ["c", "a", "b"]);
+});
+
+ok("orderModelMenu: a history-only model stays selectable", () => {
+  // The wizard offers it too; goose may have stopped advertising a model the
+  // project used last week, which must not hide it from the chat.
+  const ordered = orderModelMenu(mergeModelOptions([{ value: "a" }], []), ["old-model"]);
+  assert.deepEqual(ordered.map((item) => item.value), ["old-model", "a"]);
+  assert.equal(ordered[0].description, "history");
+});
+
+ok("orderModelMenu: a history model goose also lists is not duplicated", () => {
+  const ordered = orderModelMenu(mergeModelOptions([{ value: "a", name: "A" }], []), ["a"]);
+  assert.equal(ordered.length, 1);
+  assert.equal(ordered[0].label, "A");
+  assert.equal(ordered[0].description, undefined);
+});
+
+ok("orderModelMenu: repeated history entries are listed once", () => {
+  const ordered = orderModelMenu(mergeModelOptions([{ value: "a" }], []), ["a", "a"]);
+  assert.deepEqual(ordered.map((item) => item.value), ["a"]);
+});
+
+ok("orderModelMenu: no history = the plain merge", () => {
+  const merged = mergeModelOptions([{ value: "a", name: "A" }], [{ name: "b" }]);
+  assert.deepEqual(orderModelMenu(merged, []), merged);
 });
 
 // ─── runner ─────────────────────────────────────────────────────────────────

@@ -297,6 +297,15 @@ warns in the TUI and keeps the ACP default.
     reloads a `custom_providers/*.json` only on provider create/update/delete over ACP, so
     without the union a just-fetched model disappears from the menu on the next open
     (`set_config_option("model")` rebuilds the options from the same stale inventory)
+  - the provider, model, set and fetched-model menus are ordered like the wizard's corresponding
+    steps: the per-project `providerHistory` / `modelHistory[provider]` / `setHistory` from
+    `~/.config/rossii/projects/<dir>-<hash>.json` first (last used on top), then goose's own
+    order (`orderByUsage` / `orderModelMenu` in `src/acp/model-options.ts`, pure and unit-tested).
+    `persistSelection` keeps that history current after every live switch, so the chat and the
+    wizard agree; the current provider/model/set is marked `current` (`✦` on the model's label),
+    a model only the history knows is still offered with the `history` hint instead of vanishing,
+    and the fetched-models overlay reorders by use but never grows from the history — that list
+    is what the API serves right now
   - overlays are framed: pi-tui has no border primitive, so `BorderBox` (`src/acp/overlay.ts`,
     unit-tested) draws a titled box around the SelectList; long lists use `SearchableList`,
     which adds a filter line and matches by **substring** (the stock `setFilter` is
