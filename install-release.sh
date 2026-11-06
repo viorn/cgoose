@@ -9,7 +9,7 @@
 # SHA-256 when the release publishes one, and drops the binary into ~/.local/bin.
 #
 # Options:
-#   -v, --version <tag>   install a specific release (default: latest, e.g. v3.4.0)
+#   -v, --version <tag>   install a specific release (default: latest, e.g. v3.4.1)
 #   -d, --dir <path>      install into <path>            (default: ~/.local/bin)
 #       --no-checksum     skip SHA-256 verification
 #   -h, --help            show this help
@@ -49,7 +49,7 @@ asset (pre-3.0 tags used the cgoose-… name), verifies its SHA-256 when the
 release publishes one, and installs the binary.
 
 Options:
-  -v, --version <tag>   install a specific release (default: latest, e.g. v3.4.0)
+  -v, --version <tag>   install a specific release (default: latest, e.g. v3.4.1)
   -d, --dir <path>      install into <path>            (default: ~/.local/bin)
       --no-checksum     skip SHA-256 verification
   -h, --help            show this help

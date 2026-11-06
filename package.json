@@ -1,6 +1,6 @@
 {
   "name": "rossii",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "An ACP terminal UI for Goose \u2014 chat, live configuration, session sets",
   "type": "module",
   "repository": {
