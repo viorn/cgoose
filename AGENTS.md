@@ -126,6 +126,10 @@ warns in the TUI and keeps the ACP default.
   and which is goose's, plus the command list goose announces, pure and unit-tested),
   `command-complete.ts` (the composer's `/…` completion menu: the chat's commands plus
   goose's announced ones, pure and unit-tested),
+  `model-options.ts` (the model menu's entries: goose's `configOptions.model.options`
+  unioned with the custom provider's own JSON — goose's registry only reloads such a file
+  on provider create/update/delete, so a model written by `/model fetch` would otherwise
+  vanish from the menu — pure and unit-tested),
   `overlay.ts` (framed / searchable lists),
   `timeouts.ts` (turn watchdogs), `thought.ts` · `tool-call-block.ts` ·
   `tool-call-content.ts` (the collapsible thinking and tool blocks)
@@ -260,7 +264,12 @@ warns in the TUI and keeps the ACP default.
   overlays. `showMenu()` refuses to stack a menu on a permission prompt or another menu:
   - provider/model → `session/set_config_option`; the response's `configOptions` are kept, and
     `session/load`'s are read too (`LoadSessionResponse` used to be discarded, which is why the
-    model menu claimed "No model list available" on every resume)
+    model menu claimed "No model list available" on every resume). The `session/update` →
+    `config_option_update` notification is handled as well: goose sends the whole option set at
+    session setup and again when a provider switch's background inventory refresh completes, and
+    that second one is the only way to see the refreshed model list — the synchronous
+    `set_config_option` response still carries the pre-refresh one. The current pair is left to
+    `changeModel`/`changeProvider` (the notification only refreshes the lists)
   - every successful `/provider`, `/model` or `/set` change is written back to the per-project
     meta (`~/.config/rossii/projects/<dir>-<hash>.json`) through `persistSelection()` →
     `writeProjectMeta()` — the same file `prepareLaunch()` writes for the wizard — so the next
@@ -282,7 +291,12 @@ warns in the TUI and keeps the ACP default.
     own `GET {base_url}/v1/models` (`fetchModels()` in `src/models.ts`, no clack spinner —
     the chat owns the terminal) and offers the result in a searchable overlay. Picking one
     applies it and, for a `custom_*` provider, records it in the provider JSON with the
-    API's context limit (`addModelToCustomProviderJson`), so the wizard sees it too
+    API's context limit (`addModelToCustomProviderJson`), so the wizard sees it too. The
+    menu itself is goose's list **unioned** with that JSON (`mergeModelOptions` in
+    `src/acp/model-options.ts`, pure and unit-tested): goose's in-process provider registry
+    reloads a `custom_providers/*.json` only on provider create/update/delete over ACP, so
+    without the union a just-fetched model disappears from the menu on the next open
+    (`set_config_option("model")` rebuilds the options from the same stale inventory)
   - overlays are framed: pi-tui has no border primitive, so `BorderBox` (`src/acp/overlay.ts`,
     unit-tested) draws a titled box around the SelectList; long lists use `SearchableList`,
     which adds a filter line and matches by **substring** (the stock `setFilter` is
@@ -356,7 +370,8 @@ warns in the TUI and keeps the ACP default.
   to warnings when absent); `launchGooseAcp` checks `goose acp --help` at startup and falls
   back to the classic TUI otherwise
 - Verification scripts: `bun run test` (unit tests for `extensions.ts`, `session-meta.ts`,
-  `session-config.ts`, `steer.ts`, `slash-commands.ts`, `command-complete.ts`, the db-backed
+  `session-config.ts`, `steer.ts`, `slash-commands.ts`, `command-complete.ts`,
+  `model-options.ts`, the db-backed
   session listing, the overlay
   components and the
   tool-call block + its `tool-call-content.ts` wire mapping — no goose
